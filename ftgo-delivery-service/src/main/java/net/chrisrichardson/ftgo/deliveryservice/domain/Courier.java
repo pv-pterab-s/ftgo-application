@@ -21,6 +21,7 @@ public class Courier {
   public Courier(long courierId) {
     this.id = courierId;
     this.plan = new Plan();
+    this.available = false;
   }
 
   public static Courier create(long courierId) {

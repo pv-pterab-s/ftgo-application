@@ -51,6 +51,11 @@ public class DeliveryServiceTest {
     assertTrue(courier.isAvailable());
   }
 
+  @Test
+  public void shouldCreateCourierAsUnavailable() {
+    assertFalse(courier.isAvailable());
+  }
+
   // should Create Restaurant
 
   @Test
