@@ -301,3 +301,54 @@ details.quiet summary{cursor:pointer;color:var(--muted)}details.quiet summary b{
 .finding-impact .impact-tag{font-size:12px}
 .finding-impact .impact-path{flex-basis:100%;color:var(--muted);overflow-wrap:anywhere}
 .finding-impact .impact-note{color:var(--muted);margin:8px 0 0}
+.run-details{margin:12px 16px;border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:var(--panel);font-size:13px}
+.run-details>summary{cursor:pointer;display:flex;flex-wrap:wrap;gap:2px 10px;align-items:baseline}
+.run-details>summary span{color:var(--muted)}
+.run-details h4{margin:14px 0 6px;font-size:12px;color:var(--muted);letter-spacing:.03em;text-transform:uppercase}
+.run-details .run-revisions{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;margin:10px 0 0}
+.run-details .run-revisions dt{font-weight:600;color:var(--muted)}
+.run-details .run-revisions dd{margin:0;overflow-wrap:anywhere}
+.run-details .run-components{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:6px}
+.run-details .run-components li{border:1px solid var(--line);border-radius:12px;padding:2px 10px;background:var(--sunk)}
+.run-details .run-components span{color:var(--muted)}
+.run-details .run-checks{width:100%;border-collapse:collapse}
+.run-details .run-checks th{text-align:left;font-weight:600;color:var(--muted);border-bottom:1px solid var(--line);padding:4px 6px}
+.run-details .run-checks td{vertical-align:top;border-bottom:1px solid var(--line);padding:6px}
+.run-details .run-checks td:last-child,.run-details .run-checks th:last-child{text-align:right;white-space:nowrap}
+.run-state{white-space:nowrap;font-weight:600}
+.run-state.ok{color:var(--ok)}.run-state.warn{color:var(--warn)}.run-state.bad{color:var(--bad)}.run-state.muted{color:var(--muted)}
+.run-details .run-gaps,.finding-gaps ul{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.run-details .run-gaps li,.finding-gaps li{display:flex;flex-wrap:wrap;gap:2px 10px;align-items:baseline;padding:4px 8px;border-left:3px solid var(--warn);background:var(--sunk);border-radius:4px}
+.run-details .run-gaps li.incomplete{border-left-color:var(--bad)}
+.run-details .run-gaps li.trace,.finding-gaps li.trace{border-left-color:var(--purple)}
+.finding-gaps li.route{border-left-color:var(--blue)}
+.run-details .run-gaps code{flex-basis:100%;color:var(--muted);overflow-wrap:anywhere;font-size:12px}
+.run-details .run-note,.finding-gaps p{color:var(--muted);margin:8px 0 0}
+.contract-trace{margin:0 16px 12px;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:13px}
+.contract-trace h4{margin:0 0 4px;font-size:14px}
+.contract-trace>ul{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:8px}
+.contract-route{border-left:3px solid var(--muted);background:var(--sunk);border-radius:4px;padding:8px 10px}
+.contract-route.changed,.contract-route.removed{border-left-color:var(--bad)}
+.contract-route.new{border-left-color:var(--warn)}
+.contract-route.unchanged{border-left-color:var(--ok)}
+.contract-route p{margin:4px 0}
+.contract-route.compact{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;padding:5px 10px}
+.contract-route.compact code{font-weight:600}
+.contract-head{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline}
+.contract-head code{font-weight:600}
+.contract-state{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)}
+.contract-route.changed .contract-state,.contract-route.removed .contract-state{color:var(--bad)}
+.contract-route.unchanged .contract-state{color:var(--ok)}
+.contract-route dl{display:grid;grid-template-columns:max-content 1fr;gap:2px 10px;margin:6px 0 0}
+.contract-route dt{color:var(--muted);font-weight:600}
+.contract-route dd{margin:0;overflow-wrap:anywhere}
+.contract-route small{color:var(--muted)}
+.contract-obligations{margin-top:6px}
+.contract-obligations ul{list-style:none;margin:2px 0 0;padding:0}
+.contract-obligations li{display:grid;gap:1px}
+.contract-ask{font-weight:600}
+.contract-trace .contract-note{color:var(--muted);margin:8px 0 0}
+@media(max-width:600px){.contract-route dl{grid-template-columns:1fr}}
+.finding-gaps{margin:0 16px 12px;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:13px}
+.finding-gaps h4{margin:0 0 6px;font-size:14px}
+@media(max-width:600px){.run-details .run-revisions{grid-template-columns:1fr}.run-details .run-checks td:last-child{white-space:normal}}

@@ -13,7 +13,7 @@ const api=(qs.get('api')||'').replace(/\/+$/,'');
 let dataPath=qs.get('data')||'';
 const {ANALYSIS,REVIEW}=walkthroughPipeline;
 const initialView=qs.get('view')==='checks'?'checks':'review';
-const state={desc:walkthroughPipeline.isDescriptionRoute(qs),status:null,packet:null,packetDigest:null,summary:null,model:null,view:initialView,selected:initialView==='review'?(qs.get('item')||null):null,tab:'obj',node:null,full:false,evidenceFile:'',methods:{},drafts:new Map(),reasons:new Map(),saves:new Map(),reviewScope:null,commentBody:'',commentChecked:0,error:'',loadingArtifact:false};
+const state={desc:walkthroughPipeline.isDescriptionRoute(qs),status:null,packet:null,packetDigest:null,summary:null,model:null,view:initialView,selected:initialView==='review'?(qs.get('item')||null):null,tab:'obj',node:null,full:false,evidenceFile:'',methods:{},drafts:new Map(),reasons:new Map(),saves:new Map(),reviewScope:null,commentBody:'',commentChecked:0,error:'',loadingArtifact:false,runDetailsOpen:false};
 let pollTimer=null;
 let assessmentResize=null;
 let returnCommentId=/^[0-9]+$/.test(qs.get('comment')||'')?qs.get('comment'):null;
@@ -228,7 +228,7 @@ function checksScreen(){
   after=`<div class="violation-box"><h3>${count?`${count} review item${count===1?'':'s'}`:'Review evidence is incomplete'}</h3><p style="margin:0">${esc(count?'Open CodeIntent to review each behavior, rule finding, and test finding.':state.status?.reason||'Open CodeIntent to review the recorded evidence.')}</p><p style="margin:0"><button type="button" class="btn blue" data-act="open">Review in CodeIntent →</button></p></div>`;
  }
  if(completed&&verdict()==='PASS'&&state.status?.acceptance?.mode==='enforce'&&state.status.acceptance.status!=='ready')top=top.replace('All checks have passed','Analysis passed').replace('2 successful CodeIntent checks','Governance acceptance is reported separately below.');
- return githubHead()+checkExplanation()+`<div class="merge">${top}${phaseRow('analysis',analysis)}${phaseRow('intent review',intent)}</div>${after}${acceptanceNotice()}`;
+ return githubHead()+checkExplanation()+`<div class="merge">${top}${phaseRow('analysis',analysis)}${phaseRow('intent review',intent)}</div>${after}${acceptanceNotice()}${runDetails()}`;
 }
 
 function intentLines(value){
@@ -273,15 +273,15 @@ function listScreen(){
  if(!state.model){
   const finished=state.status?.state==='completed';
   const failures=checks().filter(check=>check.state==='error'||check.state==='failed');
-  if(demo&&finished&&rawChecks().some(walkthroughPipeline.demoEvidenceGap))return '<div class="ci"><p class="empty-list">No review items to display.</p></div>';
-  if(finished||state.error)return `<div class="ci"><div class="error-box" role="status"><h2>Review evidence unavailable</h2><p>${esc(state.error||(failures.length?'Analysis finished with errors; review evidence could not be produced.':'Analysis finished without a recorded review artifact.'))}</p>${failures.length?`<ul>${failures.map(check=>`<li><b>${esc(check.label||check.id)}</b>: ${esc(check.detail||check.summary||'Analysis unavailable')}</li>`).join('')}</ul>`:''}</div></div>`;
+  if(demo&&finished&&rawChecks().some(walkthroughPipeline.demoEvidenceGap))return `<div class="ci"><p class="empty-list">No review items to display.</p>${runDetails()}</div>`;
+  if(finished||state.error)return `<div class="ci"><div class="error-box" role="status"><h2>Review evidence unavailable</h2><p>${esc(state.error||(failures.length?'Analysis finished with errors; review evidence could not be produced.':'Analysis finished without a recorded review artifact.'))}</p>${failures.length?`<ul>${failures.map(check=>`<li><b>${esc(check.label||check.id)}</b>: ${esc(check.detail||check.summary||'Analysis unavailable')}</li>`).join('')}</ul>`:''}</div>${runDetails()}</div>`;
   return `<div class="ci"><div class="loading">Waiting for recorded review evidence…</div></div>`;
  }
  const all=items();
  const reviewable=all.filter(item=>item.status!=='unknown');
  const complete=(state.model.semanticStatus==='no_changes'||state.model.noGovernedChanges)&&verdict()==='PASS';
  const empty=demo?'No review items to display.':complete?'No change to evaluated governed behavior was established.':'Review evidence is incomplete. An empty list does not establish unchanged behavior.';
- if(!reviewable.length)return `<div class="ci">${complete?'<div class="happy"><span class="face" aria-hidden="true">✓</span><h3>No governed changes require review</h3><p>Analysis passed. No review response is needed for this change.</p></div>':`<p class="empty-list">${empty}</p>`}${acceptanceNotice()}${summaryNotice()}</div>`;
+ if(!reviewable.length)return `<div class="ci">${complete?'<div class="happy"><span class="face" aria-hidden="true">✓</span><h3>No governed changes require review</h3><p>Analysis passed. No review response is needed for this change.</p></div>':`<p class="empty-list">${empty}</p>`}${acceptanceNotice()}${summaryNotice()}${runDetails()}</div>`;
  const section=(kind,heading)=>{
   const group=reviewable.filter(item=>item.kind===kind);
   if(!group.length)return '';
@@ -289,7 +289,7 @@ function listScreen(){
   return `<section class="findings-section" aria-labelledby="${id}"><h1 id="${id}">${heading}</h1><ul class="findings-list" aria-label="${heading}">${group.map(item=>`<li><button class="findings-item" type="button" data-row="${esc(item.id)}">${esc(item.summary||item.title)}</button></li>`).join('')}</ul></section>`;
  };
  const sections=[section('change','Did you intend these behavioral changes?'),section('constraint','Did you mean to change these constraints?')].filter(Boolean);
- return `<div class="ci findings-review section-count-${sections.length}"><div class="findings-sections">${sections.join('')}</div>${acceptanceNotice()}${summaryNotice()}</div>`;
+ return `<div class="ci findings-review section-count-${sections.length}"><div class="findings-sections">${sections.join('')}</div>${acceptanceNotice()}${summaryNotice()}${runDetails()}</div>`;
 }
 // The first changed line on each side of the recorded excerpt, from its patch hunk header.
 function changedLines(comparison){
@@ -321,6 +321,14 @@ function sourceLinks(item){
  return links.length?`<div class="source-links"><small>SOURCE</small><code title="${esc(item.file)}">${esc(item.file)}</code><span>${links.join(' · ')}</span></div>`:'';
 }
 // What a person configured, what the analysis derived from code, and what is model wording.
+// Accepted obligations on the consumers this finding's traced event routes reach.
+function consumerObligations(item){
+ const seen=new Map();
+ for(const route of codeIntentContractTrace.contractRoutes(item,state.packet))
+  for(const row of route.obligations||[])if(!seen.has(row.obligation_id))seen.set(row.obligation_id,{...row,altered:route.status!=='unchanged'});
+  else if(route.status!=='unchanged')seen.get(row.obligation_id).altered=true;
+ return [...seen.values()];
+}
 function findingOrigins(item){
  const finding=(item.findings||[])[0],authority=state.status?.governance_baseline?.authority||{};
  const shortRef=value=>String(value||'').replace(/^gov:/,'').slice(0,12);
@@ -329,13 +337,18 @@ function findingOrigins(item){
  if(item.objective)people=`The accepted constraint above was written and accepted by people in the governance ledger${release}. It is not inferred from this code.`;
  else if(finding?.kind==='standard')people=`Rule ${finding.rule_id} was written and approved by people in this repository's coding standards${finding.basis?` (${finding.basis})`:''}.`;
  else if(finding?.kind==='test')people='None. The test-quality check is a built-in CodeIntent check, not a rule someone configured for this repository.';
- else people='None. No accepted objective covers this change, so the question is only whether you intended it.';
+ else{
+  const consumers=consumerObligations(item),altered=consumers.filter(row=>row.altered),named=(altered.length?altered:consumers).map(row=>row.obligation_id).join(', ');
+  people=consumers.length?`No accepted objective covers the changed code itself. The ${altered.length?'consumer that receives the changed value':'consumers on its traced routes'} ${altered.length?'is':'are'} governed by ${named}, written and accepted by people in the governance ledger${release}. See Cross-service contract below.`
+   :'None. No accepted objective covers this change, so the question is only whether you intended it.';
+ }
  const base=String(state.packet?.baseline_commit||'').slice(0,12),head=sha.slice(0,12);
  const code=[];
  if(item.intentBefore?.length||item.intentAfter?.length)code.push(`The intent facts were extracted by deterministic analysis of the baseline (${base||'unknown'}) and this PR (${head}).`);
  if(item.comparison?.before?.text!=null)code.push(`The code excerpt is ${item.comparison.scope==='method'?'the changed hunks of the recorded method':'taken'} from the digest-verified PR patch.`);
  if(finding)code.push(`The finding itself is the recorded result of the ${finding.kind==='test'?'test-quality':'coding-standards'} check on this commit.`);
  if(item.connections?.length)code.push('The connected outcomes come from the accepted workflow map, matched to the methods this PR changed.');
+ if(codeIntentContractTrace.contractRoutes(item,state.packet).length)code.push('The cross-service routes were traced from the baseline and PR source, from the published value to the consumer\'s handler.');
  const model=/AGENT INTERPRETATION/.test(item.groundingLabel||'')?'The summary sentences are written by a model from the recorded facts. They can be wrong; check them against the code.':'None. Every statement here is projected from recorded analysis.';
  return `<details class="provenance" open><summary>Where this comes from</summary><dl><dt>Set by people</dt><dd>${esc(people)}</dd><dt>Derived from code</dt><dd>${esc(code.join(' ')||'No code-derived facts were recorded for this item.')}</dd><dt>Model wording</dt><dd>${esc(model)}</dd></dl></details>`;
 }
@@ -372,11 +385,14 @@ function detailScreen(item){
    <section class="pane"><header><b>Intent</b><span>${esc(label(item.concept))}</span></header>${intent.length?`<pre>${lines(intent)}</pre>`:'<p class="evidence-empty">No intent comparison recorded for this item.</p>'}</section>
    <section class="pane"><header><b>Code</b><span>${esc(short(item.file))}</span></header>${item.comparison?.before?.text!=null&&item.comparison?.after?.text!=null?`<pre>${lines(sourceLines(item))}</pre>${item.comparison.complete?'':`<p class="evidence-empty">${esc(item.comparison.qualification||'Recorded source excerpt; open more evidence for context.')}</p>`}`:`<p class="evidence-empty">${esc(item.comparison?.reason||'No source comparison recorded for this item. Check the source evidence view for available patches.')}</p>`}</section>
   </div>
+  ${codeIntentContractTrace.contractMarkup(item,state.packet,repo,sha)}
   ${codeIntentFindingImpact.findingImpactMarkup(item,state.packet)}
+  ${codeIntentRunDetails.findingGapsMarkup(item,state.packet)}
   ${item.status==='unknown'?'<div class="ask desc-assessment" role="region" aria-label="Intent assessment"><b>LACKS_DETERMINISTIC_EVIDENCE. Review the analysis gap; assessments are unavailable.</b></div>':item.status==='watch'?'<div class="ask desc-assessment" role="region" aria-label="Intent assessment"><b>This is informational; no response is required.</b></div>':`<div class="ask desc-assessment" role="region" aria-label="Intent assessment"><b>${esc(question)}</b>${selector}<button type="button" class="choice yes" data-act="yes" ${target&&!save?.busy?'':'disabled'} aria-pressed="${answer==='yes'}">${esc(yes)}</button><button type="button" class="choice no" data-act="no" ${target&&!save?.busy?'':'disabled'} aria-pressed="${answer==='no'}">${esc(no)}</button>${reasonBox}<button type="button" class="choice return-github" data-act="return-github" ${answer&&target&&!save?.busy&&returnToCommentUrl()?'':'disabled'} aria-busy="${!!save?.busy}"><span class="return-spinner" aria-hidden="true"><img src="assets/checks-running.gif" width="18" height="18" alt=""></span><span>Return to Github</span></button></div>`}
   ${reported}<section class="compact-evidence" aria-labelledby="recorded-evidence-heading"><h4 id="recorded-evidence-heading">Recorded evidence</h4><div id="recorded-evidence">${resolution}${connections}${reviewExplorer.pane(item,state.packet,state.summary,checks(),{tab:state.tab,node:state.node,full:state.full,file:state.evidenceFile,methods:state.methods})}</div></section>
  </article></div>`;
 }
+function runDetails(){return codeIntentRunDetails.runDetailsMarkup(state.status,state.packet,repo,{open:state.runDetailsOpen});}
 function acceptanceNotice(){
  const a=state.status?.acceptance;
  if(a?.mode!=='enforce'||a.status==='ready')return '';
@@ -500,6 +516,8 @@ document.addEventListener('click',async event=>{
 
 
 });
+// Polling re-renders; keep the run-details panel as the reviewer left it.
+document.addEventListener('toggle',event=>{if(event.target.matches?.('[data-run-details]'))state.runDetailsOpen=event.target.open;},true);
 document.addEventListener('input',event=>{
  if(!event.target.matches('[data-review-reason]'))return;
  const review=reviewTarget(items().find(i=>i.id===state.selected));

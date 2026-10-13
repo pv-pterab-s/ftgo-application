@@ -46,9 +46,10 @@ function sameType(left,right){
  return left.includes('.')&&right.includes('.')?false:null;
 }
 const rowArity=row=>Array.isArray(row[8])?row[8].length:0;
-// The terrain row for one recorded method. An exact holon-map identity wins. Otherwise the file and
-// name must pick one method, narrowed by parameter count when that is recorded. Overloads that stay
-// ambiguous resolve to nothing: showing a sibling overload's callers would misattribute impact.
+// The terrain row for one recorded method. An exact holon-map identity wins. Otherwise the file, name,
+// parameter count and parameter types must all agree with one method. Without comparable types a name
+// match is not proof (the PR may have added an overload beside a baseline sibling), so it resolves to
+// nothing rather than show another overload's callers.
 function resolveMethod(terrain,map,file,name,arity,exactRef,types=null){
  const index=new Map(terrain.methods.map((row,i)=>[row[0],i]));
  const exact=exactRef?(map?.methods||[]).filter(row=>row.method===exactRef&&index.has(row.id)).map(row=>index.get(row.id)):[];
@@ -56,15 +57,15 @@ function resolveMethod(terrain,map,file,name,arity,exactRef,types=null){
  let candidates=terrain.methods.map((row,i)=>[row,i]).filter(([row])=>(!file||terrain.files?.[row[1]]===file)&&
   (row[2]===name||name.endsWith('.'+row[2])||row[2].endsWith('.'+name)));
  if(arity!==null)candidates=candidates.filter(([row])=>rowArity(row)===arity);
- if(types!==null){
-  const compared=candidates.map(candidate=>{
-   const row=candidate[0],recorded=(row[8]||[]).map(id=>terrain.argument_types?.[id]);
-   const matches=types.map((type,i)=>sameType(type,recorded[i]));
-   return {candidate,matches};
-  }).filter(({matches})=>!matches.includes(false));
-  if(compared.some(({matches})=>matches.includes(null)))return {rows:[],ambiguous:true};
-  candidates=compared.map(({candidate})=>candidate);
- }
+ // No parameters is complete type evidence.
+ if(types===null&&arity===0)types=[];
+ if(types===null)return candidates.length?{rows:[],ambiguous:true}:{rows:[]};
+ const compared=candidates.map(candidate=>{
+  const row=candidate[0],recorded=(row[8]||[]).map(id=>terrain.argument_types?.[id]);
+  return {candidate,matches:types.map((type,i)=>sameType(type,recorded[i]))};
+ }).filter(({matches})=>!matches.includes(false));
+ if(compared.some(({matches})=>matches.includes(null)))return {rows:[],ambiguous:true};
+ candidates=compared.map(({candidate})=>candidate);
  if(candidates.length>1)return {rows:[],ambiguous:true};
  return {rows:candidates.map(([,i])=>i)};
 }
@@ -156,7 +157,7 @@ function findingImpact(item,packet){
 
 function findingImpactMarkup(item,packet){
  const impact=findingImpact(item,packet);
- const note='<p class="impact-note">Callers come from the baseline’s resolved Java call graph, up to three calls away. Messages and HTTP calls between services are not traced here, so a service missing from this list can still be affected.</p>';
+ const note='<p class="impact-note">Callers come from the baseline’s resolved Java call graph, up to three calls away. Messages and HTTP calls between services are not traced here, so a service missing from this list can still be affected. Traced event routes appear under Cross-service contract.</p>';
  if(impact.status==='unavailable')return '';
  if(impact.status==='ambiguous')return `<section class="finding-impact"><h4>Impact of this change</h4><p>The recorded method signature cannot distinguish this finding’s method from possible overloads, so its callers cannot be identified reliably.</p>${note}</section>`;
  if(impact.status==='unmapped')return `<section class="finding-impact"><h4>Impact of this change</h4><p>This finding’s method is new in this PR or is not in the baseline call graph, so it has no recorded callers.</p>${note}</section>`;
