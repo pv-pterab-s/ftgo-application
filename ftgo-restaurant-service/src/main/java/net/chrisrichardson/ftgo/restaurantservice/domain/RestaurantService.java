@@ -20,7 +20,7 @@ public class RestaurantService {
   public Restaurant create(CreateRestaurantRequest request) {
     Restaurant restaurant = new Restaurant(request.getName(), request.getMenu());
     restaurantRepository.save(restaurant);
-    restaurantDomainEventPublisher.publish(restaurant, Collections.singletonList(new RestaurantCreated(request.getName(), request.getAddress(), request.getMenu())));
+    restaurantDomainEventPublisher.publish(restaurant, Collections.singletonList(new RestaurantCreated(request.getDisplayName() != null ? request.getDisplayName() : request.getName(), request.getAddress(), request.getMenu())));
     return restaurant;
   }
 

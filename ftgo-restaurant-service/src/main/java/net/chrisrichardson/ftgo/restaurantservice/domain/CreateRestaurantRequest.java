@@ -7,6 +7,7 @@ public class CreateRestaurantRequest {
   private String name;
   private Address address;
   private RestaurantMenu menu;
+  private String displayName;
 
   private CreateRestaurantRequest() {
 
@@ -32,6 +33,14 @@ public class CreateRestaurantRequest {
 
   public void setMenu(RestaurantMenu menu) {
     this.menu = menu;
+  }
+
+  public String getDisplayName() {
+    return displayName;
+  }
+
+  public void setDisplayName(String displayName) {
+    this.displayName = displayName;
   }
 
   public Address getAddress() {
