@@ -6,6 +6,7 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 public class MoneyTest {
 
@@ -36,6 +37,29 @@ public class MoneyTest {
   public void shouldMultiply() {
     int multiplier = 12;
     assertEquals(new Money(M2_AMOUNT * multiplier), m2.multiply(multiplier));
+  }
+
+  @Test
+  public void shouldTreatAmountsWithDifferentScalesAsEqual() {
+    Money priceWithOneDecimalPlace = new Money("12.0");
+    Money priceWithTwoDecimalPlaces = new Money("12.00");
+
+    assertEquals(priceWithOneDecimalPlace, priceWithTwoDecimalPlaces);
+    assertEquals(priceWithOneDecimalPlace.hashCode(), priceWithTwoDecimalPlaces.hashCode());
+  }
+
+  @Test
+  public void shouldConvertAnExactDecimalAmountToCents() {
+    assertEquals(Long.valueOf(1234), new Money("12.34").asLong());
+  }
+
+  @Test
+  public void shouldRejectFractionsOfACentWhenConvertingToCents() {
+    try {
+      new Money("12.345").asLong();
+      fail("expected conversion to reject fractions of a cent");
+    } catch (ArithmeticException ignored) {
+    }
   }
 
 

@@ -1,24 +1,25 @@
 package net.chrisrichardson.ftgo.common;
 
-import org.apache.commons.lang.builder.EqualsBuilder;
-import org.apache.commons.lang.builder.HashCodeBuilder;
 import org.apache.commons.lang.builder.ToStringBuilder;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.Objects;
 
 //@Embeddable
 //@Access(AccessType.FIELD)
 public class Money {
 
-  public static Money ZERO = new Money(0);
+  public static final Money ZERO = new Money(0);
 
-  private BigDecimal amount;
+  private final BigDecimal amount;
 
   private Money() {
+    this.amount = null;
   }
 
   public Money(BigDecimal amount) {
-    this.amount = amount;
+    this.amount = Objects.requireNonNull(amount, "amount");
   }
 
   public Money(String s) {
@@ -37,16 +38,12 @@ public class Money {
 
     Money money = (Money) o;
 
-    return new EqualsBuilder()
-            .append(amount, money.amount)
-            .isEquals();
+    return amount.compareTo(money.amount) == 0;
   }
 
   @Override
   public int hashCode() {
-    return new HashCodeBuilder(17, 37)
-            .append(amount)
-            .toHashCode();
+    return amount.stripTrailingZeros().hashCode();
   }
 
   @Override
@@ -74,6 +71,6 @@ public class Money {
   }
 
   public Long asLong() {
-    return multiply(100).amount.longValue();
+    return amount.movePointRight(2).setScale(0, RoundingMode.UNNECESSARY).longValueExact();
   }
 }
