@@ -1,0 +1,218 @@
+name: Holonic governance review
+
+# Repository-neutral PR-review workflow installed by the Holonic onboarding
+# service. Every repository- and endpoint-specific value is a {{PLACEHOLDER}}
+# that onboarding substitutes before committing the file; see templates/README.md.
+#
+# Security model (mirrors the FTGO forks):
+#   * This is a TRUSTED base-branch workflow. `pull_request_target` runs it in the
+#     context of the BASE repository on the default-branch copy of this file, so an
+#     untrusted PR branch cannot read `secrets.HOLONIC_API_KEY` or change the rules
+#     by editing the workflow on its own branch.
+#   * It NEVER checks out or executes PR code. It only reads the PR's textual diff
+#     and metadata through the GitHub API and forwards them to the Holonic review API.
+#   * The governance rules live in the Holonic Lambda image, not in this repository,
+#     so a PR cannot change the rules it is judged against.
+#   * The review Lambda validates HOLONIC_API_KEY, resolves the tenant, and scopes
+#     the review to that tenant's baseline.
+
+on:
+  pull_request_target:
+    # Onboarding renders the repository's default branch here (typically "main"
+    # or "master"); both are supported by rendering the actual default branch.
+    branches: ["master"]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  statuses: write
+
+concurrency:
+  group: holonic-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Only run for the repository this workflow was installed into; prevents the
+    # file from firing in an unexpected fork.
+    if: github.repository == 'pv-pterab-s/ftgo-application'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # --- Endpoint-specific (injected by onboarding) ---
+      VERIFY_CHECKS_URL: ""
+      STATUS_URL: ""
+      STATUS_PAGE_URL: ""
+      # --- Credential (set once as a repo secret by onboarding) ---
+      API_KEY: ${{ secrets.HOLONIC_API_KEY }}
+      # --- Derived at runtime from the trusted base-repo context ---
+      GH_TOKEN: ${{ github.token }}
+      PR_FULL_REPO: ${{ github.repository }}
+      PR_OWNER: ${{ github.repository_owner }}
+      PR_REPO: ${{ github.event.repository.name }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+
+    steps:
+      - name: Resolve the pull request
+        run: |
+          set -euo pipefail
+          gh api "repos/$PR_FULL_REPO/pulls/$PR_NUMBER" > /tmp/pull-request.json
+          if [ "$(jq -r .state /tmp/pull-request.json)" != open ]; then
+            echo "::error::Pull request #$PR_NUMBER is not open."
+            exit 1
+          fi
+          jq -r '"PR_SHA=\(.head.sha)", "PR_BASE_SHA=\(.base.sha)",
+                 "PR_BASE_REF=\(.base.ref)", "PR_HEAD_REF=\(.head.ref)"' \
+            /tmp/pull-request.json >> "$GITHUB_ENV"
+          { echo 'PR_TITLE<<HOLONIC_TITLE_EOF'
+            jq -r .title /tmp/pull-request.json
+            echo 'HOLONIC_TITLE_EOF'; } >> "$GITHUB_ENV"
+
+      - name: Post the in-progress status and comment
+        run: |
+          set -euo pipefail
+          if [ -z "${API_KEY:-}" ]; then
+            echo "::error::Configure the HOLONIC_API_KEY repository secret."
+            exit 1
+          fi
+          # A live report URL for this specific PR/SHA, if a status page is configured.
+          if [ -n "${STATUS_PAGE_URL:-}" ]; then
+            dashboard_url=$(python3 -c 'import os,urllib.parse; base=os.environ["STATUS_PAGE_URL"].rstrip("/"); print(base + "/?" + urllib.parse.urlencode({"sha":os.environ["PR_SHA"],"pr":os.environ["PR_NUMBER"],"repo":os.environ["PR_FULL_REPO"]}))')
+          else
+            dashboard_url="${PR_HTML_URL:-}"
+          fi
+          echo "DASHBOARD_URL=$dashboard_url" >> "$GITHUB_ENV"
+
+          gh api --method POST "repos/$PR_FULL_REPO/statuses/$PR_SHA" \
+            -f state=pending -f context='Holonic / Governance review' \
+            -f description='Governance review in progress' \
+            ${dashboard_url:+-f target_url="$dashboard_url"} >/dev/null
+
+          marker='<!-- holonic-review -->'
+          body="$marker
+          ### Holonic governance review
+
+          Analysis in progress. Results will appear here when the review finishes."
+          comment_id=$(gh api "repos/$PR_FULL_REPO/issues/$PR_NUMBER/comments" --paginate \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"$marker\"))) | .id" | head -1 || true)
+          if [ -n "$comment_id" ]; then
+            gh api --method PATCH "repos/$PR_FULL_REPO/issues/comments/$comment_id" -f body="$body" >/dev/null \
+              || echo "::warning::Could not update the live-status PR comment."
+          else
+            gh api --method POST "repos/$PR_FULL_REPO/issues/$PR_NUMBER/comments" -f body="$body" >/dev/null \
+              || echo "::warning::Could not create the live-status PR comment."
+          fi
+
+      - name: Submit the pull request to Holonic review
+        run: |
+          set -euo pipefail
+
+          # Fetch the PR's unified diff as text through the API. PR code is never
+          # checked out or executed.
+          gh api -H 'Accept: application/vnd.github.v3.diff' \
+            "repos/$PR_FULL_REPO/pulls/$PR_NUMBER" > /tmp/pr.diff
+
+          python3 - <<'PY'
+          import json, os
+          with open("/tmp/pr.diff", encoding="utf-8", errors="replace") as stream:
+              diff = stream.read()
+          payload = {
+              "pipeline": "typesafe-checks-v1",
+              "owner": os.environ["PR_OWNER"],
+              "repo": os.environ["PR_REPO"],
+              "sha": os.environ["PR_SHA"],
+              "base_sha": os.environ["PR_BASE_SHA"],
+              "diff": diff,
+              "base_ref": os.environ["PR_BASE_REF"],
+              "pr_ref": os.environ["PR_HEAD_REF"],
+              "pull_request_number": int(os.environ["PR_NUMBER"]),
+              "pull_request_title": os.environ["PR_TITLE"],
+          }
+          with open("/tmp/holonic-payload.json", "w", encoding="utf-8") as stream:
+              json.dump(payload, stream)
+          PY
+
+          for attempt in 1 2 3 4 5; do
+            code=$(curl -sS -o /tmp/holonic-response.json -w '%{http_code}' \
+              -X POST "$VERIFY_CHECKS_URL" -H 'Content-Type: application/json' \
+              -H "x-api-key: $API_KEY" -d @/tmp/holonic-payload.json)
+            case "$code" in
+              200|202)
+                echo "Holonic review submitted."
+                break
+                ;;
+              403|429|5??)
+                if [ "$attempt" -lt 5 ]; then
+                  echo "Gateway returned HTTP $code; retrying ($attempt/5)..."
+                  sleep $((attempt * 2))
+                  continue
+                fi
+                ;;
+            esac
+            cat /tmp/holonic-response.json || true
+            echo "HTTP $code"
+            exit 1
+          done
+
+      - name: Wait for the review result
+        run: |
+          set -euo pipefail
+          marker='<!-- holonic-review -->'
+          deadline=$((SECONDS + 840))
+          while (( SECONDS < deadline )); do
+            document=$(curl -fsS --get "$STATUS_URL" \
+              --data-urlencode "sha=$PR_SHA" --data-urlencode "repo=$PR_FULL_REPO" || true)
+            if [ -z "$document" ]; then document='{}'; fi
+            state=$(jq -r '.state // "absent"' <<<"$document")
+
+            if [ "$state" = "completed" ]; then
+              verdict=$(jq -r '.verdict // "UNKNOWN"' <<<"$document")
+
+              # Compact PR comment: one line per published check.
+              {
+                echo "$marker"
+                echo "### Holonic governance review -- $verdict"
+                echo
+                jq -r '.checks[]? | "- **\(.label // .id)**: \(.state)\(if (.detail // "") != "" then " — \(.detail)" else "" end)"' <<<"$document" || true
+                if [ -n "${DASHBOARD_URL:-}" ]; then
+                  echo
+                  echo "[Open the live report ↗]($DASHBOARD_URL)"
+                fi
+              } > /tmp/holonic-comment.md
+              comment_id=$(gh api "repos/$PR_FULL_REPO/issues/$PR_NUMBER/comments" --paginate \
+                --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"$marker\"))) | .id" | head -1 || true)
+              if [ -n "$comment_id" ]; then
+                gh api --method PATCH "repos/$PR_FULL_REPO/issues/comments/$comment_id" -F body=@/tmp/holonic-comment.md >/dev/null \
+                  || echo "::warning::Could not update the governance comment."
+              else
+                gh api --method POST "repos/$PR_FULL_REPO/issues/$PR_NUMBER/comments" -F body=@/tmp/holonic-comment.md >/dev/null \
+                  || echo "::warning::Could not create the governance comment."
+              fi
+
+              # Commit status check: PASS succeeds, every other terminal verdict fails.
+              if [ "$verdict" = "PASS" ]; then
+                review_state=success
+              else
+                review_state=failure
+              fi
+              gh api --method POST "repos/$PR_FULL_REPO/statuses/$PR_SHA" \
+                -f state="$review_state" -f context='Holonic / Governance review' \
+                -f description="Governance review completed: $verdict" \
+                ${DASHBOARD_URL:+-f target_url="$DASHBOARD_URL"} >/dev/null
+
+              [ "$verdict" = "PASS" ] && exit 0
+              echo "::error::Holonic governance review completed with $verdict"
+              exit 1
+            else
+              echo "Holonic review state: $state"
+            fi
+            sleep 5
+          done
+
+          gh api --method POST "repos/$PR_FULL_REPO/statuses/$PR_SHA" \
+            -f state=failure -f context='Holonic / Governance review' \
+            -f description='Governance review timed out' \
+            ${DASHBOARD_URL:+-f target_url="$DASHBOARD_URL"} >/dev/null || true
+          echo "::error::Holonic governance review timed out."
+          exit 1
