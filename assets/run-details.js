@@ -69,6 +69,12 @@ function checkCoverage(check){
  const subchecks=(check.subchecks||[]).filter(row=>row&&typeof row==='object');
  const missed=subchecks.filter(row=>row.state&&!['passed','skipped'].includes(row.state));
  const notes=[];
+ const coverage=check.coverage;
+ if(coverage?.schema==='check-coverage-v1'){
+  if(coverage.enforcement==='watch_only')notes.push('Watch-only: performed checks are advisory');
+  for(const reason of coverage.reasons||[])notes.push(humanize(reason));
+  if(coverage.completeness==='not_recorded')notes.push('Scope completeness was not recorded');
+ }
  if(missed.length){
   const reasons=[...new Set(missed.flatMap(row=>(row.gaps||[]).map(text=>String(text).replace(/^region:[0-9a-f]+:\s*/,'').replace(/:\s*[0-9a-f]{64}$/,''))))];
   notes.push(`${missed.length} of ${subchecks.length} parts did not run (${missed.map(row=>row.label||row.id).join(', ')})${reasons.length?': '+reasons.join('; '):''}`);
@@ -84,6 +90,11 @@ function checkCoverage(check){
  else if(['skipped','stopped'].includes(state))status='skipped';
  else if(state==='passed')status=notes.length?'partial':'complete';
  else status='running';
+ if(coverage?.schema==='check-coverage-v1'){
+  if(coverage.execution==='skipped')status='skipped';
+  else if(coverage.execution==='incomplete')status='incomplete';
+  else if(state==='passed'&&coverage.completeness!=='reported_scope_complete')status='partial';
+ }
  return {id:check.id,label:check.label||humanize(check.id),status,notes,detail,seconds:seconds(check.started_at,check.completed_at)};
 }
 const STATUS_LABEL={complete:['Passed','ok'],partial:['Passed, incomplete','warn'],issue:['Issue found','bad'],incomplete:['Did not complete','bad'],skipped:['Skipped','muted'],running:['Running','muted']};

@@ -200,7 +200,12 @@ function terrainSourceChanges(packet,terrain){
   let matches=[...ids].filter(id=>rows.has(id)&&terrain.files?.[rows.get(id)[1]]===flow.source?.file);
   if(!matches.length&&flow.method&&flow.source?.file){
    const owner=terrainFlowMethodOwner(flow.method);
-   matches=(terrain.methods||[]).filter(row=>terrain.files?.[row[1]]===flow.source.file&&(owner===row[2]||owner.endsWith('.'+row[2]))).map(row=>row[0]);
+   // The terrain carries a humanized "Class: method" label, not the FQN. Match a changed
+   // boundary to its dot by normalizing both to lowercase alphanumerics within the same file
+   // (e.g. Order#noteApproved -> "ordernoteapproved" == "Order: note approved").
+   const norm=s=>String(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+   const parts=String(flow.method).split('#'),labelKey=parts.length===2?norm(parts[0].split('.').pop()+parts[1]):null;
+   matches=(terrain.methods||[]).filter(row=>terrain.files?.[row[1]]===flow.source.file&&(owner===row[2]||owner.endsWith('.'+row[2])||(labelKey&&norm(row[2])===labelKey))).map(row=>row[0]);
   }
   if(matches.length===1)mapped.set(matches[0],flow);else unmapped.push(flow);
  }
@@ -262,7 +267,7 @@ function workflowMethodImpactMarkup(doc,selected,workflows,state){
  }));
  const selectedWorkflowMethods=new Set(selected.obligations.flatMap(row=>(row.evidence||[]).filter(item=>item.classification!=='unaffected').map(item=>item.method_id)));
  const methodDots=t.methods.map((row,index)=>{
-  const rows=byMethod.get(row[0])||[],impact=sourceChanges.mapped.get(row[0])?.change_kind==='added'?'added':rows.some(item=>['exact_fact_change','changed_witness_method'].includes(item.classification))?strongest(rows):sourceChanges.mapped.has(row[0])?'source_changed':rows.length?strongest(rows):'stable',selectedMethod=state.governedMethod===row[0],workflowFocus=selectedWorkflowMethods.has(row[0]),directPr=directMethodIds.has(row[0]);
+  const rows=byMethod.get(row[0])||[],impact=sourceChanges.mapped.get(row[0])?.change_kind==='added'?'added':rows.some(item=>['exact_fact_change','changed_witness_method'].includes(item.classification))?strongest(rows):sourceChanges.mapped.has(row[0])?'source_changed':rows.length?strongest(rows):'stable',selectedMethod=state.governedMethod===row[0],workflowFocus=selectedWorkflowMethods.has(row[0]),directPr=directMethodIds.has(row[0])||sourceChanges.mapped.has(row[0]);
   const workflowNames=[...new Set(rows.map(item=>item.workflow.name))];
   const title=`${row[2]}${rows.length?' · '+impact.replaceAll('_',' ')+' · affected workflows: '+workflowNames.join(', '):' · no workflow-bound PR impact'}`;
   const signature=terrainMethodSignature(row,methods.get(row[0]),t.argument_types),memberships=holonsByMethodIndex.get(index)||[];

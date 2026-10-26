@@ -168,6 +168,7 @@ details.quiet summary{cursor:pointer;color:var(--muted)}details.quiet summary b{
 .rule{margin:0 16px 10px;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:var(--sunk)}
 .rule small,.summary small.k{display:block;font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--muted)}
 .rule p{margin:2px 0 4px;font-size:15px;font-weight:600}.rule span{font-size:12.5px;color:var(--muted)}
+.standard-rule p{font-weight:400;font-size:14px}.standard-rule p b{font-size:15px;font-weight:600}.standard-rule .standard-question{font-style:italic;color:var(--muted)}.standard-rule .standard-meta{font-size:12.5px;color:var(--muted);margin-top:6px}
 .badge.vio{color:var(--bad);border-color:var(--bad-line)}
 .cause{margin:0 16px 12px;font-size:13.5px}
 .ans{font-size:12px;font-weight:600}.ans.yes{color:var(--ok)}.ans.no{color:var(--bad)}
@@ -352,3 +353,25 @@ details.quiet summary{cursor:pointer;color:var(--muted)}details.quiet summary b{
 .finding-gaps{margin:0 16px 12px;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:13px}
 .finding-gaps h4{margin:0 0 6px;font-size:14px}
 @media(max-width:600px){.run-details .run-revisions{grid-template-columns:1fr}.run-details .run-checks td:last-child{white-space:normal}}
+.fallback-blocked{border:1px solid var(--bad);border-left:4px solid var(--bad);border-radius:6px;padding:10px 14px;margin:0 0 14px}.fallback-blocked b{color:var(--bad);font-size:15px}.fallback-blocked p{margin:6px 0 0}.desc-assessment .merge-blocked{flex-basis:100%;text-align:right;color:#ff8182;font-weight:600;font-size:13px}
+
+/* Coding-standards detail: approved code-first layout, scoped away from intent pages. */
+.stage:has(.standard-page){background:transparent;border:0;border-radius:0;box-shadow:none;overflow:visible}
+.screen:has(.standard-page){padding:0;min-height:0}
+.standard-page>.tile{background:var(--panel)}
+.standard-page .tile-head{padding-bottom:10px}
+.standard-page .tile-head h3{font-size:24px;line-height:1.25;font-weight:700}
+.standard-page .standard-intro{margin:0 16px 14px;padding:0}
+.standard-page .standard-intro p{margin:0}
+.standard-page .standard-intro .standard-resolution{margin-top:12px}
+.standard-page .diffs{margin:0 16px 20px;padding:0}
+.standard-page .provenance,.standard-page .finding-impact{margin:0 16px 20px;background:var(--panel)}
+.standard-page .pane header{align-items:center;flex-wrap:wrap}
+.standard-page .pane header span{overflow-wrap:anywhere;min-width:0}
+.standard-page .pane header h4,.standard-page .provenance h4,.standard-page .finding-impact h4{font-size:14px;font-weight:700;line-height:1.5;margin:0 0 6px;color:var(--ink)}
+.standard-page .pane header h4{margin:0}
+.standard-page .compact-evidence{border-top:0;padding-top:0}
+.standard-numbered-diff{overflow-x:auto;padding:8px 0;font:13px/1.6 var(--mono)}
+.standard-diff-line{display:grid;grid-template-columns:44px 44px minmax(max-content,1fr);min-height:21px}
+.standard-diff-line .line-no{color:var(--muted);text-align:right;padding:0 10px 0 4px;border-right:1px solid var(--line);user-select:none}
+.standard-diff-line code{font:inherit;white-space:pre;padding:0 12px;color:inherit}

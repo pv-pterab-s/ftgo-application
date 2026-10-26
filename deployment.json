@@ -1,0 +1,7 @@
+{
+  "repository": "pv-pterab-s/ftgo-application",
+  "api": "https://ieg4z2l09g.execute-api.us-east-2.amazonaws.com/prod",
+  "image": "962500057659.dkr.ecr.us-east-2.amazonaws.com/common-table-codeintent@sha256:596693989752159d3f1ad50433245e9845cc8ab1562f1a97825307d7e63870fd",
+  "state": "published_not_verified",
+  "baseline": "supplied baseline_ftgo.tgz imported unchanged"
+}

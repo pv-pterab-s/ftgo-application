@@ -310,7 +310,7 @@ const GAP_CLOSE={unresolved_call:'Nothing required. Behavior through these calls
   'Governed facts changed; semantic preservation requires evidence.':'Nothing required here. The intent judgment for this concept decides whether behavior was preserved.'};
 const GAP_TITLE={context_only_cpg_drift:'Surrounding code structure changed','Governed facts changed; semantic preservation requires evidence.':'Governed facts changed without a preservation proof'};
 // Customer-facing text never names internal analysis tools.
-const customerText=t=>String(t||'').replace(/\bcpg\b/gi,'code structure').replace(/\b(joern|typesafe|llm)\b/gi,'analysis');
+const customerText=t=>String(t||'').replace(/\bcpg\b/gi,'code structure').replace(/\b(?:joern|type\s*safe|llm)\b/gi,'analysis').replace(/\b(?:gherkin|gerkin)\b/gi,'behavior model');
 function subcheckClose(reason){
   if(/module purpose|change declaration/i.test(reason))return 'Declare each module\'s purpose and this PR\'s intended change, then rerun this revision.';
   if(/budget|omitted/i.test(reason))return 'The review budget was exceeded. Narrow or split the change, then rerun.';

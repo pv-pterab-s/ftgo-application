@@ -83,6 +83,12 @@ function scopedPatchComparison(packet,file,method,flows){
   qualification:scope==='method'?'Changed hunks in the recorded method.':'Changed hunks matching the recorded operations; these may belong to a shared helper.'};
 }
 
+function dedupeFacts(entries){
+ // A merged change links several flows that can carry the identical before/after fact
+ // (e.g. one method reached by several sagas). Keep one copy so the intent is not repeated.
+ const seen=new Set();
+ return (entries||[]).filter(entry=>{const key=JSON.stringify(entry);if(seen.has(key))return false;seen.add(key);return true;});
+}
 function flowFacts(flow,side){
  const values=[];
  for(const change of flow?.fact_changes||[]){
@@ -164,7 +170,7 @@ function modelFromSemantics(packet,summary){
    after:row.behavior_after,
    summary:row.semantic_consequence,
    detailSummary:[row.semantic_consequence,row.user_or_system_effect].filter(Boolean).join(' '),
-   intentBefore:related.flatMap(value=>flowFacts(value,'before')),intentAfter:related.flatMap(value=>flowFacts(value,'after')),
+   intentBefore:dedupeFacts(related.flatMap(value=>flowFacts(value,'before'))),intentAfter:dedupeFacts(related.flatMap(value=>flowFacts(value,'after'))),
    connections:paths.map(path=>({title:path.customer_outcome||path.workflow_name||path.workflow_id,
     detail:path.obligation_statement||path.obligation_phase||'Accepted workflow connection'})),
    comparison,reviewType:reviewType({objective}),
@@ -208,16 +214,29 @@ function modelFromEntries(entries){
 
 function publicJudgment(flow,checks){
  const embedded=flow?.behavior_judgment||{};
+ // Canonical claims already own their assessment. Nearby boundary judgments
+ // cannot resolve them, even if another question has a supported answer.
+ if(flow?.claim_assessment)return embedded;
  if(embedded.question_id&&/^supported_boundary_/.test(embedded.status||''))return embedded;
- const boundary=flow?.boundary_id||flow?.title;
- const regions=new Set((flow?.concepts||[]).map(row=>row.unit_id).filter(Boolean));
+ if(!embedded.question_id)return embedded;
  const rows=(checks||[]).find(check=>check.id==='intent_diff')?.judgments||[];
- const match=rows.find(row=>row.question_id&&row.boundary_id===boundary&&
-  (!regions.size||(row.intent_region_ids||[]).some(id=>regions.has(id)))&&
-  ['violated','preserved','equivalent'].includes(row.answer));
- if(!match)return embedded;
- return {...match,choice:match.answer,status:match.answer==='violated'?
-  'supported_boundary_violation':'supported_boundary_preservation'};
+ const matches=rows.filter(row=>row.question_id===embedded.question_id);
+ if(matches.length!==1)return embedded;
+ const match=matches[0];
+ if(match.answer==='violated'&&match.verdict==='changed')return {...match,choice:match.answer,status:'supported_boundary_violation'};
+ if(match.answer==='preserved'&&match.verdict==='preserved')return {...match,choice:match.answer,status:'supported_boundary_preservation'};
+ return embedded;
+}
+
+function exactObjective(packet,flows,questionId){
+ const state=flows[0]?.behavior_judgment?.choice;
+ const claims=new Set(flows.map(flow=>flow.claim_assessment?.claim_id).filter(Boolean));
+ const obligations=(packet?.governed_objectives?.customer_workflows?.workflows||[]).flatMap(row=>row.obligations||[]);
+ const statements=obligations.filter(row=>(row.judgments||[]).some(judgment=>
+  (claims.size?claims.has(judgment.claim_id):judgment.question_id===questionId)&&
+  (judgment.choice||judgment.answer)===state))
+  .map(row=>row.statement).filter(Boolean);
+ return [...new Set(statements)].join(' · ');
 }
 
 function modelFromGovernedFlows(packet,checks){
@@ -225,24 +244,26 @@ function modelFromGovernedFlows(packet,checks){
  for(const flow of packet?.flows||[]){
   if(evidenceGap(flow))continue;
   const judgment=publicJudgment(flow,checks);
-  if(!judgment.question_id||!/^supported_boundary_/.test(judgment.status||''))continue;
-  if(!grouped.has(judgment.question_id))grouped.set(judgment.question_id,[]);
-  grouped.get(judgment.question_id).push({...flow,behavior_judgment:judgment});
+  const unresolved=judgment.status==='human_review';
+  const id=judgment.question_id||flow.claim_assessment?.claim_id;
+  if(!id||(!unresolved&&!/^supported_boundary_/.test(judgment.status||'')))continue;
+  if(!grouped.has(id))grouped.set(id,[]);
+  grouped.get(id).push({...flow,behavior_judgment:judgment});
  }
- const objectiveViolations=packet?.acceptance?.layers?.core_objectives?.violations||[];
  return [...grouped].map(([id,flows])=>{
   const flow=flows[0],judgment=flow.behavior_judgment||{};
   const file=flows.map(value=>value.source?.file).find(Boolean)||'';
-  const objective=objectiveViolations.length===1?objectiveViolations[0].statement||'':'';
+  const objective=exactObjective(packet,flows,id);
   const violated=judgment.status==='supported_boundary_violation'||judgment.choice==='violated';
-  return {id,kind:objective?'constraint':'change',status:violated?'violation':'preserved',
+  const unresolved=judgment.status==='human_review';
+  return {id,kind:objective&&!unresolved?'constraint':'change',status:unresolved?'review':violated?'violation':'preserved',
    title:words(judgment.boundary_id||flow.title)||'Governed boundary change',
    concept:judgment.boundary_id||flow.title||'Governed boundary',method:shortMethod(flow.method),methodRef:flow.method||'',file,owner:'',objective,
    before:'The accepted baseline recorded the governed boundary behavior shown below.',
-   after:violated?'This pull request changes that governed boundary and the recorded judgment reports a violation.':'The recorded judgment reports that this pull request preserves the governed boundary.',
-   summary:violated?'The deterministic boundary comparison and recorded judgment establish a governed semantic violation.':'The deterministic boundary comparison and recorded judgment establish preservation.',
-   detailSummary:'',intentBefore:flows.flatMap(value=>flowFacts(value,'before')),
-   intentAfter:flows.flatMap(value=>flowFacts(value,'after')),connections:[],
+   after:unresolved?'The available evidence does not establish whether this change preserves the accepted requirement.':violated?'This pull request changes that governed boundary and the recorded judgment reports a violation.':'The recorded judgment reports that this pull request preserves the governed boundary.',
+   summary:unresolved?'The analysis completed with an unresolved judgment. Review the evidence for this exact claim.':violated?'The deterministic boundary comparison and recorded judgment establish a governed semantic violation.':'The deterministic boundary comparison and recorded judgment establish preservation.',
+   detailSummary:'',intentBefore:dedupeFacts(flows.flatMap(value=>flowFacts(value,'before'))),
+   intentAfter:dedupeFacts(flows.flatMap(value=>flowFacts(value,'after'))),connections:[],
    comparison:patchComparison(packet,file),reviewType:objective?'Business':'Behavior',
    groundingLabel:'RECORDED GOVERNED BOUNDARY JUDGMENT',
    qualification:'Projected directly from the digest-pinned intent-flow facts and recorded governed-boundary judgment; no optional semantic prose was available.'};
@@ -263,6 +284,9 @@ function reviewFindings(checks,includeAdvisory=false){
    file:finding.file||'',method:finding.unit||'',line:finding.line||'',
    basis:[finding.category_parent,finding.category,finding.rule_id].filter(Boolean).join(' · '),
    category:finding.category||'',category_parent:finding.category_parent||'',rule_id:finding.rule_id||'',
+   rule_version:finding.rule_version||'',name:finding.name||'',guidance:finding.guidance||'',
+   rule_text:finding.rule_text||'',category_question:finding.category_question||'',
+   severity:finding.severity||'',owner:finding.owner||'',detected_by:finding.detected_by||'',static_check:finding.static_check||'',
    watchOnly:finding.watchOnly||finding.band==='fyi',informational:finding.band==='fyi',ref:finding.ref||'',decision:finding.decision||''});
  }
  const tests=(checks||[]).find(check=>check.id==='improper_tests');
@@ -280,6 +304,35 @@ function reviewFindings(checks,includeAdvisory=false){
  return rows;
 }
 
+// How a coding-standards finding was raised, in plain words.
+function standardDetection(finding){
+ if(finding.detected_by==='static')return `a deterministic static check${finding.static_check?` (${finding.static_check})`:''}`;
+ if(finding.detected_by==='always_flag')return 'a pattern this rule always flags';
+ if(finding.detected_by==='judge')return 'the coding-standards judge, which read the changed method against the rule';
+ return 'the coding-standards check';
+}
+// A coding-standards finding uses the same review page as an intent change, filled from the rule and the
+// finding: no intent facts, and no wording borrowed from an intent item that touches the same method.
+function standardItem(packet,checks,finding,target,interpretation){
+ const where=shortMethod(finding.method)||String(finding.file||'').split('/').pop()||'This code';
+ const line=finding.line?` (line ${finding.line})`:'';
+ const how=standardDetection(finding);
+ const summary=interpretation.summary||`${where} does not follow the rule "${String(finding.name||finding.title||'').replace(/\.$/,'')}". ${finding.guidance||''}`.trim();
+ return {id:finding.id,kind:finding.watchOnly?'change':'constraint',status:finding.watchOnly?'watch':'finding',standard:true,
+  title:finding.title,concept:'Repository standard',method:finding.method,methodRef:target?.methodRef||finding.method||'',
+  file:finding.file,line:finding.line||'',owner:finding.owner||'',objective:'',
+  beforeLabel:'THE RULE REQUIRES',afterLabel:'WITH THIS PR',
+  before:String(finding.name||finding.title||'This repository standard.').replace(/\.?$/,'.'),
+  after:`${where}${line} does not meet it. Raised by ${how}.`,
+  summary,detailSummary:interpretation.review||summary,resolution:finding.guidance||'',
+  intentBefore:[],intentAfter:[],connections:target?.connections||[],
+  comparison:target?.comparison||scopedPatchComparison(packet,finding.file,finding.method,[])||patchComparison(packet,finding.file),
+  findings:[finding],relatedBehaviorId:target?.id||null,reviewType:reviewType(finding),
+  check:(checks||[]).find(check=>check.id==='coding_standards')||null,
+  groundingLabel:'RULE FINDING · CODING-STANDARDS CHECK',
+  qualification:`Raised by ${how}. The rule and its guidance were written by people in this repository's coding standards; this explanation is assembled from them, not written by a model.`};
+}
+
 function reviewFindingItems(packet,summary,items,checks,includeAdvisory=false){
  const interpretations=new Map((summary?.intent_semantics?.finding_explanations||[])
   .map(row=>[row.finding_id,{summary:row.summary||row.explanation,review:row.review||row.explanation}]));
@@ -290,6 +343,7 @@ function reviewFindingItems(packet,summary,items,checks,includeAdvisory=false){
   const target=finding.kind==='standard'?(candidates.find(item=>method&&shortMethod(item.method)===method)
     ||(candidates.length===1?candidates[0]:null)):null;
   const interpretation=interpretations.get(finding.findingKey)||{};
+  if(finding.kind==='standard'){projected.push(standardItem(packet,checks,finding,target,interpretation));continue;}
   const plain=interpretation.summary||target?.summary||finding.title;
   const fallback=finding.kind==='test'?[finding.summary,finding.basis].filter(Boolean).join(' '):plain;
   projected.push({id:finding.id,kind:finding.kind==='standard'&&!finding.watchOnly?'constraint':'change',status:finding.watchOnly?'watch':'finding',title:finding.title,
@@ -328,8 +382,15 @@ function ownerReviewItems(packet,summary,items,checks){
  for(const check of checks||[])for(const finding of check.findings||[]){
   if(finding.review_kind!=='intent'||represented.has(finding.id))continue;
   const flow=flows.get(finding.id),file=finding.file||flow?.source?.file||'';
-  result.push({id:finding.id,kind:'change',status:'review',title:finding.title,
-   summary:finding.title,detailSummary:finding.observation||'',before:describe(flow,'before'),after:describe(flow,'after'),
+  const labels={state_transition:'State-transition behavior',boundary_call:'Service interactions',
+   http_endpoint:'HTTP endpoint behavior',event_publish:'Event publication',value_selection:'Value selection'};
+  const exactFlows=(packet?.flows||[]).filter(row=>row.id===finding.id);
+  const concepts=[...new Set((exactFlows.length===1?exactFlows[0].fact_changes||[]:[]).map(row=>labels[row.form]).filter(Boolean))];
+  const title=(concepts.length?concepts.join(' and '):'Source behavior')+' requires owner review';
+  const explanation=typeof finding.sema_description==='string'&&finding.sema_description.trim()?finding.sema_description:
+   'Recorded source behavior changed. An owner must decide whether this change is intended; no accepted obligation or violation is inferred.';
+  result.push({id:finding.id,kind:'change',status:'review',title,
+   summary:explanation,detailSummary:finding.observation||'',before:describe(flow,'before'),after:describe(flow,'after'),
    concept:'Source behavior requiring intent review',method:shortMethod(finding.unit||flow?.method),methodRef:finding.unit||flow?.method||'',file,
    objective:'',owner:'',reviewType:'Behavior',connections:[],
    intentBefore:flowFacts(flow,'before'),intentAfter:flowFacts(flow,'after'),comparison:scopedPatchComparison(packet,file,finding.unit||flow?.method,[flow]),
@@ -378,10 +439,20 @@ const states=new Map();
 function reviewState(scope){if(!states.has(scope))states.set(scope,{selected:null,drafts:new Map(),submitted:new Map()});return states.get(scope);}
 function allItems(model){return [...model.changes,...model.constraints];}
 function decision(state,id){return state.drafts.get(id)||state.submitted.get(id)||'';}
-function label(item){return item.status==='violation'?'Constraint changed':item.status==='finding'?'Check failed':'Behavior change';}
+function label(item){return item.status==='review'?'Needs review':item.status==='violation'?'Constraint changed':item.status==='finding'?'Check failed':'Behavior change';}
 function rowMarkup(item,state){
  const answer=decision(state,item.id),submitted=state.submitted.has(item.id);
  return `<button type="button" class="rr-row ${answer||''} ${submitted?'submitted':''}" data-rr-open="${escapeHtml(item.id)}"><span><b>${escapeHtml(item.title)}</b><small>${escapeHtml(item.summary)}</small></span><span class="rr-row-state">${answer==='yes'?(submitted?'Accepted':'Yes, intended'):answer==='no'?(submitted?'Investigating':'No, investigate'):escapeHtml(label(item))}</span></button>`;
+}
+function groupedRowsMarkup(items,state){
+ const groups=new Map();
+ for(const item of items){
+  const key=item.file&&item.methodRef?JSON.stringify([item.file,item.methodRef]):JSON.stringify(['item',item.id]);
+  if(!groups.has(key))groups.set(key,[]);
+  groups.get(key).push(item);
+ }
+ return [...groups.values()].map(rows=>rows.length===1?rowMarkup(rows[0],state):
+  `<section class="rr-source-group"><h4>${escapeHtml(shortMethod(rows[0].methodRef))}</h4><p>${rows.length} separate assessments of this source change</p>${rows.map(row=>rowMarkup(row,state)).join('')}</section>`).join('');
 }
 function intentText(value){
  const lines=[];
@@ -427,7 +498,7 @@ function violationMarkup(item){
  const ref=escapeHtml(finding.ref);
  const body=finding.decision==='rule_change_requested'
   ?'<p>Reported as a false detection: its rule exception applies to this pull request now, and to the repository once it merges.</p>'
-  :'<p>Someone with write access answers on this finding\'s review page:</p><ul><li><b>Yes, intended:</b> the rule allows it in this pull request now, and in the whole repository once this pull request merges.</li><li><b>No:</b> the finding stays open and this pull request stays blocked.</li></ul>';
+  :'<p>Anyone can answer on this finding\'s review page:</p><ul><li><b>Yes, intended:</b> the rule allows it in this pull request now, and in the whole repository once this pull request merges.</li><li><b>No:</b> the finding stays open and this pull request stays blocked.</li></ul>';
  return `<section class="rr-violation"><small>RULE VIOLATION · ${ref}</small>${body}</section>`;
 }
 function detailMarkup(item,state){
@@ -436,12 +507,12 @@ function detailMarkup(item,state){
  return `<button type="button" class="rr-back" data-rr-back>← All changes</button><article class="rr-detail">
   <header><div><h2>${escapeHtml(item.title)}</h2><p><code>${escapeHtml(item.method||shortFile(item.file))}</code></p></div><span class="rr-badge ${item.status}">${escapeHtml(label(item))}</span></header>
   ${item.objective?`<section class="rr-objective"><small>ACCEPTED CONSTRAINT</small><b>${escapeHtml(item.objective)}</b></section>`:''}
-  <div class="rr-before-after"><section><small>BEFORE</small><p>${escapeHtml(item.before)}</p></section><section><small>WITH THIS PR</small><p>${escapeHtml(item.after)}</p></section></div>
+  <div class="rr-before-after"><section><small>${escapeHtml(item.beforeLabel||'BEFORE')}</small><p>${escapeHtml(item.before)}</p></section><section><small>${escapeHtml(item.afterLabel||'WITH THIS PR')}</small><p>${escapeHtml(item.after)}</p></section></div>
   <section class="rr-explanation"><small>${escapeHtml(item.groundingLabel||'ASK CODE INTENT')}</small><p>${escapeHtml(item.summary)}</p></section>
   <div class="rr-evidence ${item.intentBefore?.length||item.intentAfter?.length?'':'source-only'}">${item.intentBefore?.length||item.intentAfter?.length?`<section><header><b>Intent</b><span>${escapeHtml(words(item.concept))}</span></header>${comparisonMarkup(item.intentBefore,item.intentAfter,intentText)}</section>`:''}
   <section><header><b>Code</b><span title="${escapeHtml(item.file)}">${escapeHtml(shortFile(item.file))}</span></header>${comparisonMarkup(codeText(item.comparison,'before'),codeText(item.comparison,'after'),valueText)}</section></div>
   ${connections}<details class="rr-grounding"><summary>How this answer was produced</summary><p>${escapeHtml(item.qualification)}</p><p><code>${escapeHtml(item.file||'No source anchor supplied')}</code></p></details>
-  ${violationMarkup(item)}${item.status==='unknown'?'<footer>Assessment is unavailable until the evidence gap is resolved.</footer>':`<footer><b>Did you mean this?</b><div><button type="button" data-rr-answer="yes" data-rr-id="${escapeHtml(item.id)}" aria-pressed="${answer==='yes'}">Yes, I meant this</button><button type="button" data-rr-answer="no" data-rr-id="${escapeHtml(item.id)}" aria-pressed="${answer==='no'}">No, investigate</button></div></footer>`}
+  ${violationMarkup(item)}${item.status==='review'?'<footer>The recorded judgment is unresolved. Review this evidence; approving intent does not establish correctness.</footer>':item.status==='unknown'?'<footer>Assessment is unavailable until the evidence gap is resolved.</footer>':`<footer><b>Did you mean this?</b><div><button type="button" data-rr-answer="yes" data-rr-id="${escapeHtml(item.id)}" aria-pressed="${answer==='yes'}">Yes, I meant this</button><button type="button" data-rr-answer="no" data-rr-id="${escapeHtml(item.id)}" aria-pressed="${answer==='no'}">No, investigate</button></div></footer>`}
  </article>`;
 }
 function codeIntentReviewMarkup(model,scope){
@@ -453,8 +524,8 @@ function codeIntentReviewMarkup(model,scope){
  }
  const drafts=state.drafts.size;
  return `<section class="rr-review" data-rr-scope="${escapeHtml(scope)}"><header class="rr-lede"><div><h2>Did you intend these behavioral changes?</h2><p>${items.length} decision${items.length===1?'':'s'} from the code-intent comparison.</p></div><span>${model.preserved} preserved</span></header>
-  <section><h3>Behavioral changes <span>${model.changes.length}</span></h3><div class="rr-rows">${model.changes.map(item=>rowMarkup(item,state)).join('')||'<p class="rr-none">No ungoverned behavioral changes need a decision.</p>'}</div></section>
-  ${model.constraints.length?`<section><h3>Constraint violations <span>${model.constraints.length}</span></h3><div class="rr-rows">${model.constraints.map(item=>rowMarkup(item,state)).join('')}</div></section>`:''}
+  <section><h3>Behavioral changes <span>${model.changes.length}</span></h3><div class="rr-rows">${groupedRowsMarkup(model.changes,state)||'<p class="rr-none">No ungoverned behavioral changes need a decision.</p>'}</div></section>
+  ${model.constraints.length?`<section><h3>Constraint violations <span>${model.constraints.length}</span></h3><div class="rr-rows">${groupedRowsMarkup(model.constraints,state)}</div></section>`:''}
   ${model.uncertainty.length||model.omitted||model.additionalRecorded?`<details class="rr-limit"><summary>Analysis limits</summary><ul>${model.omitted?`<li>${model.omitted} additional grouped intent change${model.omitted===1?' was':'s were'} recorded but not translated in this bounded review.</li>`:''}${model.additionalRecorded?`<li>${model.additionalRecorded} additional analyzed change${model.additionalRecorded===1?' remains':'s remain'} in the run evidence outside this semantic narrative.</li>`:''}${model.uncertainty.map(x=>`<li>${escapeHtml(x)}</li>`).join('')}</ul></details>`:''}
   <footer class="rr-submit"><span>Responses are draft decisions until submitted.</span><button type="button" data-rr-undo ${drafts?'':'disabled'}>Undo all</button><button type="button" class="primary" data-rr-submit ${drafts?'':'disabled'}>Submit ${drafts||''}</button></footer></section>`;
 }
@@ -482,8 +553,7 @@ function advisoryDescription(packet,summary,check,finding){
   row.ref&&row.ref===finding.ref&&row.rule_id===finding.rule_id&&row.file===finding.file&&row.method===finding.unit));
  if(!item)return null;
  return {...item,title:`Informational check: ${shortMethod(finding.unit)||String(finding.file||'').split('/').pop()}`,
-  before:'This observation does not establish a change from the baseline.',
-  after:`The current run classified this observation in ${finding.unit||finding.file} as informational.`,
+  after:`The current run classified this observation in ${finding.unit||finding.file} as informational; no response is required.`,
   summary:`The checker raised an informational concern about ${finding.category||'this code'}.`,
   detailSummary:`Review guidance: ${finding.guidance||'Inspect the recorded source below.'}`};
 }

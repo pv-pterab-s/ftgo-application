@@ -260,7 +260,7 @@ function typeIcon(value){
 }
 function row(item,kind){
  const answer=decision(item.id),submitted=confirmed(item);
- const status=item.status==='unknown'?'LACKS_DETERMINISTIC_EVIDENCE':answer==='yes'?(submitted?'Intended · recorded':'Yes, I meant this'):answer==='no'?(submitted?'Reported incorrect · sent to Holonic':'No, finding is incorrect'):'';
+ const status=item.status==='unknown'?'LACKS_DETERMINISTIC_EVIDENCE':answer==='yes'?(submitted?'Accepted · recorded':'Accept'):answer==='no'?(submitted?'Rejected · recorded':'Reject'):'';
  const type=String(item.reviewType||'Behavior');
  return `<button type="button" class="row ${answer||''} ${submitted?'submitted':''}" data-row="${esc(item.id)}"><span class="t"><b>${esc(item.title||item.summary)}</b>${item.summary?`<span class="row-summary">${esc(item.summary)}</span>`:''}<small class="meta">${esc(item.concept||item.file||item.groundingLabel||'Recorded review evidence')}${item.objective?' · accepted constraint':''}</small></span><span class="row-side">${typeIcon(type)}${status?`<span class="st">${esc(status)}</span>`:''}</span></button>`;
 }
@@ -344,6 +344,15 @@ function findingOrigins(item){
  }
  const base=String(state.packet?.baseline_commit||'').slice(0,12),head=sha.slice(0,12);
  const code=[];
+ if(finding?.kind==='standard'){
+  code.push(`The finding is the recorded result of the coding-standards check on this commit (${head}), which checked ${finding.method||'the changed code'} against rule ${finding.rule_id}.`);
+  if(item.comparison?.before?.text!=null)code.push(`The code excerpt is ${item.comparison.scope==='method'?'the changed hunks of that method':'taken'} from the digest-verified PR patch.`);
+  const decided={judge:'Whether the code breaks the rule was decided by the coding-standards judge model. It can be wrong; compare the code with the rule.',
+   static:'Whether the code breaks the rule was decided by a deterministic static check, not a model.',
+   always_flag:'Whether the code breaks the rule was decided by a fixed pattern, not a model.'}[finding.detected_by]
+   ||'This run did not record whether the judge model or a static check raised the finding; compare the code with the rule.';
+  return `<section class="provenance"><h4>Where this comes from</h4><dl><dt>Set by people</dt><dd>${esc(people)}</dd><dt>Derived from code</dt><dd>${esc(code.join(' '))}</dd><dt>Model wording</dt><dd>${esc('None. The explanation is assembled from the rule and its guidance. '+decided)}</dd></dl></section>`;
+ }
  if(item.intentBefore?.length||item.intentAfter?.length)code.push(`The intent facts were extracted by deterministic analysis of the baseline (${base||'unknown'}) and this PR (${head}).`);
  if(item.comparison?.before?.text!=null)code.push(`The code excerpt is ${item.comparison.scope==='method'?'the changed hunks of the recorded method':'taken'} from the digest-verified PR patch.`);
  if(finding)code.push(`The finding itself is the recorded result of the ${finding.kind==='test'?'test-quality':'coding-standards'} check on this commit.`);
@@ -358,38 +367,58 @@ function currentReason(review){
  if(!review)return '';
  return state.reasons.get(review.scope)??(review.decision==='unresolved'?review.reason||'':'');
 }
+// Number only source lines anchored by a recorded patch hunk; excerpts without an anchor stay unnumbered.
+function standardCode(item){
+ let before=null,after=null;
+ const rows=sourceLines(item).map(([mark,text])=>{
+  const hunk=String(text).match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+  if(hunk){before=Number(hunk[1]);after=Number(hunk[2]);return `<div class="standard-diff-line"><span class="line-no"></span><span class="line-no"></span><code>${esc(text)}</code></div>`;}
+  const old=mark!=='+'&&before!=null?before++:'',next=mark!=='-'&&after!=null?after++:'';
+  return `<div class="standard-diff-line ${mark==='+'?'a':mark==='-'?'d':''}"><span class="line-no">${old}</span><span class="line-no">${next}</span><code>${esc((mark||' ')+' '+text)}</code></div>`;
+ }).join('');
+ const available=item.comparison?.before?.text!=null&&item.comparison?.after?.text!=null;
+ return `<div class="diffs source-only"><section class="pane"><header><h4>Code</h4><span>${esc(item.file)}</span></header>${available?`<div class="standard-numbered-diff">${rows}</div>`:`<p class="evidence-empty">${esc(item.comparison?.reason||'Source comparison unavailable. Open Source evidence for available patches.')}</p>`}</section></div>`;
+}
 function detailScreen(item){
  const answer=decision(item.id),intent=diffLines(intentLines(item.intentBefore),intentLines(item.intentAfter));
  const connections=item.connections?.length?`<div class="holon"><b>Connected governed outcomes</b><ul>${item.connections.map(connection=>`<li><b>${esc(connection.title)}</b> · ${esc(connection.detail)}</li>`).join('')}</ul></div>`:'';
  const resolution=item.resolution?`<div class="rule"><small>HOW TO RESOLVE IT</small><p>${esc(item.resolution)}</p></div>`:'';
  const interpretation=`<div class="summary"><small>${esc(item.groundingLabel||'RECORDED PIPELINE EVIDENCE')}</small><p>${esc(item.detailSummary||item.summary)}</p></div>`;
- const question='Was this an intended change?';
- const yes='Yes, I meant this',no='No, this finding is incorrect';
+ const standard=item.findings?.[0]?.kind==='standard'?item.findings[0]:null;
+ const question=standard?`Accept this code as an exception to ${standard.rule_id}?`:'Accept this governed change?';
+ // A run whose deterministic checks did not finish never goes in, so its findings take no answers.
+ const answersClosed=Boolean(state.status?.llm_review);
+ const closedBar=`<div class="ask desc-assessment" role="region" aria-label="Intent assessment"><span class="merge-blocked" role="status">${esc(llmErrorReview.BLOCKED)}</span><b>No answer is taken: deterministic verification did not finish for this run.</b></div>`;
+ const yes=standard?'Accept — allow it here':'Accept — this change is intended',no=standard?'Reject — the code must change':'Reject — not acceptable';
  const target=reviewTarget(item),targets=reviewTargets(item);
  const save=state.saves.get(target?.finding.review.scope);
  const review=target?.finding.review,reason=currentReason(review);
  // A No reports the finding as incorrect; the optional reason travels with it to Holonic's review queue.
- const reasonBox=answer==='no'&&review?`<label class="incorrect-reason"><span>Why is this finding incorrect? <small>Optional · sent to Holonic for review with the pinned evidence</small></span><textarea data-review-reason maxlength="500" rows="2" placeholder="For example: renamed only, behavior is unchanged" ${save?.busy?'disabled':''}>${esc(reason)}</textarea></label>`:'';
- const reported=review?.disposition==='finding_incorrect'&&review.decision==='unresolved'?`<div class="rule incorrect-reported"><small>REPORTED AS INCORRECT · SENT TO HOLONIC</small><p>${esc(review.reason||'No reason was given.')}${review.actor?` · ${esc(review.actor)}`:''}</p></div>`:'';
+ const reasonBox='';   // Reject-reason textarea removed; a No records without a free-text reason.
+ const reported=review?.decision==='unresolved'?`<div class="rule incorrect-reported"><small>REJECTED · WILL BE FLAGGED ON FUTURE PRS UNTIL ADJUDICATED</small><p>${esc(review.reason||'No reason was given.')}${review.actor?` · ${esc(review.actor)}`:''}</p></div>`:'';
  const selector=targets.length>1?`<label>Finding <select data-review-scope><option value="">Choose a finding</option>${targets.map(t=>`<option value="${esc(t.finding.review.scope)}" ${target===t||target?.finding.review.scope===t.finding.review.scope?'selected':''}>${esc(t.finding.title||t.finding.name||t.finding.id||t.finding.ref)}</option>`).join('')}</select></label>`:'';
 
- return `<div class="ci desc-page"><article class="tile">
-  <div class="tile-head"><h3>${esc(item.title)}</h3>${typeIcon(item.reviewType||'Behavior')}</div>
+ return `<div class="ci desc-page${standard?' standard-page':''}"><article class="tile">
+  ${standard?`<div class="tile-head"><h3>${esc(item.title)}</h3></div>
+  <div class="summary standard-intro"><p><b>Code standard violation:</b> ${esc(item.detailSummary||item.summary)}</p>${item.resolution?`<p class="standard-resolution"><b>How to resolve it:</b> ${esc(item.resolution)}</p>`:''}</div>
+  ${standardCode(item)}
+  ${findingOrigins(item)}`:`  <div class="tile-head"><h3>${esc(item.title)}</h3>${typeIcon(item.reviewType||'Behavior')}</div>
   <div class="tile-sub"><code>${esc(item.method||short(item.file))}</code></div>
-  ${item.objective?`<div class="rule"><small>ACCEPTED CONSTRAINT</small><p>${esc(item.objective)}</p></div>`:item.findings?.[0]?.kind==='standard'?`<div class="rule"><small>REPOSITORY RULE · ${esc(item.findings[0].rule_id)}</small><p>${esc(item.findings[0].title)}${item.findings[0].summary?`. ${esc(item.findings[0].summary)}`:''}</p></div>`:''}
+  ${item.objective?`<div class="rule"><small>ACCEPTED CONSTRAINT</small><p>${esc(item.objective)}</p></div>`:''}
   ${sourceLinks(item)}
-  <div class="ba"><div><small>BEFORE</small>${esc(item.before)}</div><div class="after"><small>WITH THIS PR</small>${esc(item.after)}</div></div>
+  <div class="ba"><div><small>${esc(item.beforeLabel||'BEFORE')}</small>${esc(item.before)}</div><div class="after"><small>${esc(item.afterLabel||'WITH THIS PR')}</small>${esc(item.after)}</div></div>
   ${interpretation}
   ${findingOrigins(item)}
-  <div class="diffs">
-   <section class="pane"><header><b>Intent</b><span>${esc(label(item.concept))}</span></header>${intent.length?`<pre>${lines(intent)}</pre>`:'<p class="evidence-empty">No intent comparison recorded for this item.</p>'}</section>
+  <div class="diffs${standard?' source-only':''}">
+   ${standard?'':`<section class="pane"><header><b>Intent</b><span>${esc(label(item.concept))}</span></header>${intent.length?`<pre>${lines(intent)}</pre>`:'<p class="evidence-empty">No intent comparison recorded for this item.</p>'}</section>`}
    <section class="pane"><header><b>Code</b><span>${esc(short(item.file))}</span></header>${item.comparison?.before?.text!=null&&item.comparison?.after?.text!=null?`<pre>${lines(sourceLines(item))}</pre>${item.comparison.complete?'':`<p class="evidence-empty">${esc(item.comparison.qualification||'Recorded source excerpt; open more evidence for context.')}</p>`}`:`<p class="evidence-empty">${esc(item.comparison?.reason||'No source comparison recorded for this item. Check the source evidence view for available patches.')}</p>`}</section>
   </div>
+`}
   ${codeIntentContractTrace.contractMarkup(item,state.packet,repo,sha)}
   ${codeIntentFindingImpact.findingImpactMarkup(item,state.packet)}
   ${codeIntentRunDetails.findingGapsMarkup(item,state.packet)}
-  ${item.status==='unknown'?'<div class="ask desc-assessment" role="region" aria-label="Intent assessment"><b>LACKS_DETERMINISTIC_EVIDENCE. Review the analysis gap; assessments are unavailable.</b></div>':item.status==='watch'?'<div class="ask desc-assessment" role="region" aria-label="Intent assessment"><b>This is informational; no response is required.</b></div>':`<div class="ask desc-assessment" role="region" aria-label="Intent assessment"><b>${esc(question)}</b>${selector}<button type="button" class="choice yes" data-act="yes" ${target&&!save?.busy?'':'disabled'} aria-pressed="${answer==='yes'}">${esc(yes)}</button><button type="button" class="choice no" data-act="no" ${target&&!save?.busy?'':'disabled'} aria-pressed="${answer==='no'}">${esc(no)}</button>${reasonBox}<button type="button" class="choice return-github" data-act="return-github" ${answer&&target&&!save?.busy&&returnToCommentUrl()?'':'disabled'} aria-busy="${!!save?.busy}"><span class="return-spinner" aria-hidden="true"><img src="assets/checks-running.gif" width="18" height="18" alt=""></span><span>Return to Github</span></button></div>`}
-  ${reported}<section class="compact-evidence" aria-labelledby="recorded-evidence-heading"><h4 id="recorded-evidence-heading">Recorded evidence</h4><div id="recorded-evidence">${resolution}${connections}${reviewExplorer.pane(item,state.packet,state.summary,checks(),{tab:state.tab,node:state.node,full:state.full,file:state.evidenceFile,methods:state.methods})}</div></section>
+  ${answersClosed?closedBar:item.status==='unknown'?'<div class="ask desc-assessment" role="region" aria-label="Intent assessment"><b>LACKS_DETERMINISTIC_EVIDENCE. Review the analysis gap; assessments are unavailable.</b></div>':item.status==='watch'?'<div class="ask desc-assessment" role="region" aria-label="Intent assessment"><b>This is informational; no response is required.</b></div>':`<div class="ask desc-assessment" role="region" aria-label="Intent assessment"><b>${esc(question)}</b>${selector}<button type="button" class="choice yes" data-act="yes" ${target&&!save?.busy?'':'disabled'} aria-pressed="${answer==='yes'}">${esc(yes)}</button><button type="button" class="choice no" data-act="no" ${target&&!save?.busy?'':'disabled'} aria-pressed="${answer==='no'}">${esc(no)}</button>${reasonBox}<button type="button" class="choice return-github" data-act="return-github" ${answer&&target&&!save?.busy&&returnToCommentUrl()?'':'disabled'} aria-busy="${!!save?.busy}"><span class="return-spinner" aria-hidden="true"><img src="assets/checks-running.gif" width="18" height="18" alt=""></span><span>Return to Github</span></button></div>`}
+  ${reported}<section class="compact-evidence" ${standard?'aria-label="Evidence views"':'aria-labelledby="recorded-evidence-heading"'}>${standard?'':'<h4 id="recorded-evidence-heading">Recorded evidence</h4>'}<div id="recorded-evidence">${standard?'':resolution}${connections}${reviewExplorer.pane(item,state.packet,state.summary,checks(),{tab:state.tab,node:state.node,full:state.full,file:state.evidenceFile,methods:state.methods})}</div></section>
  </article></div>`;
 }
 function runDetails(){return codeIntentRunDetails.runDetailsMarkup(state.status,state.packet,repo,{open:state.runDetailsOpen});}
@@ -414,12 +443,12 @@ function render(options={}){
  runContext.textContent=repo+(pr?' · Pull request #'+pr:'');
  const prUrl=pullRequestUrl();prBack.href=prUrl;prBack.hidden=prUrl==='#';
  document.title=`CodeIntent · ${repo||'review'}${pr?' #'+pr:''}`;
- if(state.error&&!state.status&&!state.packet){screen.innerHTML=`<div class="error-box"><b>CodeIntent could not load this run.</b><p>${esc(state.error)}</p><p><a href="/">Return to local PR runs</a></p></div>`;return;}
+ if(state.error&&!state.status&&!state.packet){screen.innerHTML=`<div class="error-box"><b>CodeIntent could not load this run.</b><p>${esc(state.error)}</p><p><a href="/">Return to local PR runs</a></p></div>`;codeIntentCustomerLanguage.sanitize(screen);return;}
  if(state.desc){
   const route=new URLSearchParams(location.search);
   const item=walkthroughPipeline.descriptionItem(items(),state.packet,state.summary,checks(),route.get('check'),route.get('issue'));
   if(item){state.selected=item.id;screen.innerHTML=detailScreen(item);}
-  else if(state.status?.llm_review)screen.innerHTML='<div class="notice"><h2>Automated verification is incomplete</h2><p>The advisory analysis below reports its source coverage separately. It does not satisfy the incomplete deterministic checks.</p></div>';
+  else if(state.status?.llm_review)screen.innerHTML='<div class="notice"><h2>Automated verification is incomplete</h2><p>This PR is not going in in this state. The nondeterministic analysis below reports its source coverage separately and does not satisfy the incomplete deterministic checks.</p></div>';
   else screen.innerHTML=`<div class="notice"><h2>${state.model?'Description unavailable':'Loading issue description…'}</h2><p>${state.model?'No matching description was recorded for this issue.':'Loading the pinned review evidence.'}</p>${state.model?checkExplanation():''}</div>`;
  }else if(state.view==='checks')screen.innerHTML=checksScreen();
  else if(state.selected){const item=items().find(value=>value.id===state.selected);screen.innerHTML=item?detailScreen(item):listScreen();}
@@ -429,8 +458,9 @@ function render(options={}){
   screen.insertAdjacentHTML('beforeend',`<section class="notice reviewability-notice"><h2>PR reviewability</h2><p>${esc(sizeNotice.message)}</p><p>${esc(sizeNotice.analysis_lines)} counted lines across ${esc(sizeNotice.changed_files)} files · ${esc(sizeNotice.mode)} policy</p></section>`);
  }
  if(state.status?.llm_review){
-  screen.insertAdjacentHTML('beforeend',`<section class="llm-fallback-review">${llmErrorReview.render(state.status.llm_review)}</section>`);
+  screen.insertAdjacentHTML('beforeend',`<section class="llm-fallback-review">${llmErrorReview.render(state.status.llm_review,state.status.checks)}</section>`);
  }
+ codeIntentCustomerLanguage.sanitize(screen);
  assessmentResize?.disconnect();
  const assessment=screen.querySelector('.desc-assessment');
  const desc=screen.querySelector('.desc-page');
@@ -487,6 +517,7 @@ document.addEventListener('click',async event=>{
  if(action==='open'){navigate('review');}
  else if(action==='checks'){event.preventDefault();navigate('checks');}
  else if(target.dataset.row){state.evidenceFile='';state.node=null;state.full=false;navigate('review',target.dataset.row);scrollTo(0,0);}
+ else if((action==='yes'||action==='no')&&state.status?.llm_review)return;
  else if(action==='yes'||action==='no'){
   const item=items().find(i=>i.id===state.selected),review=reviewTarget(item);
   if(!review||item.status==='unknown'||item.status==='watch'||state.saves.get(review.finding.review.scope)?.busy)return;
@@ -499,14 +530,12 @@ document.addEventListener('click',async event=>{
   const scope=review.finding.review.scope,answer=decision(item.id),prior=state.saves.get(scope);
   if(!answer||prior?.busy)return;
   const reason=answer==='no'?String(currentReason(review.finding.review)).trim():'';
-  const request=prior?.request&&prior.request.answer===answer&&(prior.request.reason||'')===reason?prior.request:{repository:repo,pull_request:Number(pr),head_sha:sha,scope,answer,expected_review:review.finding.review.record||null,request_id:crypto.randomUUID(),...(reason?{reason}:{})};
+  // Demo: record the Accept/Reject anonymously on click, then return to GitHub. No identity
+  // is collected; both answers are one plain POST to the review_service decision endpoint.
+  const request=prior?.request&&prior.request.answer===answer&&(prior.request.reason||'')===reason?prior.request:{repository:repo,pull_request:Number(pr),head_sha:sha,scope,answer,boundary_sig:review.finding.review.boundary_sig,check_id:review.check.id,finding_ref:review.finding.ref||review.finding.id,request_id:crypto.randomUUID(),...(reason?{reason}:{})};
   state.saves.set(scope,{request,busy:true});render();
-  if(answer==='yes'){await saveYes(request,destination);return;}
   try{
-   // No only keeps a finding open, so it stays one anonymous click; a signed-in reviewer is credited.
-   // Wait for the API's receipt, as Yes does, so a failed save is shown instead of silently lost.
-   const token=codeIntentFindingReviews.session();
-   await codeIntentFindingReviews.submit(token?{...request,session:token}:request);
+   await codeIntentFindingReviews.submit(request);
    location.assign(destination);
   }catch(error){
    state.saves.set(scope,{request:error.status===409?null:request,busy:false});render();

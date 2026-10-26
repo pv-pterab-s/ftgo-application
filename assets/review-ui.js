@@ -1,7 +1,7 @@
 /* Shared presentation of fixture and generated findings. Responses are session-only. */
 const reviewBoards = new Map();
 function customerDetail(value){
- const text=String(value||'').replace(/typesafe/gi,'analysis service').replace(/\bjev-[\w.-]+/gi,'analysis service').replace(/\bLLMs?\b/g,'analysis').replace(/\blarge language models?\b/gi,'analysis').replace(/\bjoern\b/gi,'code analysis').replace(/\bCPGs?\b/g,'code structure').replace(/\bcode property graphs?\b/gi,'code structure').replace(/\s*\(\d*\.\d+\)/g,'')
+ const text=String(value||'').replace(/\btype\s*safe\b/gi,'analysis service').replace(/\b(?:gherkin|gerkin)\b/gi,'behavior model').replace(/\bjev-[\w.-]+/gi,'analysis service').replace(/\bLLMs?\b/g,'analysis').replace(/\blarge language models?\b/gi,'analysis').replace(/\bjoern\b/gi,'code analysis').replace(/\bCPGs?\b/g,'code structure').replace(/\bcode property graphs?\b/gi,'code structure').replace(/\s*\(\d*\.\d+\)/g,'')
   // Producer and check details written for engineers, reworded for reviewers.
   .replace(/Real backend artifacts ready;\s*/i,'Analysis ready; ').replace(/\bnative (WARN|PASS|BLOCK);\s*/gi,'').replace(/bounded boundary question\(s\)/gi,'governed question(s)')
   .replace(/frozen-baseline backend evidence/gi,'analysis of the changed code').replace(/;\s*downstream checks selected/i,', so every check ran').replace(/;\s*explanations follow in Asking Code Intent/i,'');

@@ -1,5 +1,6 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Local PR pipeline · CodeIntent</title>
+<html lang="en"><head>
+<script src="assets/deployment-config.js"></script><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Local PR pipeline · CodeIntent</title>
 <style>body{font:16px system-ui;color:#24354b;background:#f6f8fa;max-width:850px;margin:50px auto;padding:0 22px}h1{font-size:30px}p{line-height:1.6}.case{background:white;border:1px solid #d0d7de;border-radius:10px;padding:22px;margin:18px 0}.actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.primary,button{background:#0969da;color:white;border:0;border-radius:6px;padding:11px 18px;font:inherit;cursor:pointer;text-decoration:none}.secondary{background:white;color:#0969da;border:1px solid #0969da}button:disabled{opacity:.5}code{overflow-wrap:anywhere;font-size:13px}.note{color:#65728a}.run-state{font-size:13px;color:#65728a}.error{color:#b42318}a{color:#0969da}</style></head>
 <body><h1>Run a local PR pipeline</h1><p>Pinned FTGO PR event → trusted workflow payload → backend analysis → Lambda check graph → Review, Checks and Intent Flow.</p>
 <p class="note">This runs the real backend and Lambda handlers locally. It publishes no GitHub check and enforces no merge rule. Missing model evidence and unfinished checks remain visible.</p>

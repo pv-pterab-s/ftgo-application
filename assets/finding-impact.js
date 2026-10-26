@@ -113,6 +113,54 @@ function patchMethods(item,packet){
  scan();
  return [...names.values()];
 }
+// Parameter types for a type-less method reference, read from this PR's own declaration of it: the
+// nearest declaration above a changed line, on the PR side. Every such declaration with this name and
+// parameter count must agree, and the parameter list must close on the declaration line.
+function declaredTypes(item,packet,name,arity){
+ if(typeof packet?.source_diff?.content!=='string'||!item.file)return null;
+ const declaration=/^\s*(?:(?:public|protected|private|static|final|synchronized|abstract)\s+)*[\w<>\[\],.?]+(?:\s*<[^>]*>)?\s+(\w+)\s*\(([^()]*)\)/;
+ let active=false,hunk=[],importsChanged=false;
+ const found=new Set();
+ const scan=()=>{
+  for(let i=0;i<hunk.length;i++){
+   if(!/^[+-]/.test(hunk[i]))continue;
+   for(let j=i;j>=0;j--){
+    if(hunk[j].startsWith('-')&&j!==i)continue; // Deleted lines are not part of the PR's source.
+    const text=j===0?hunk[0].replace(/^@@[^@]*@@\s*/,''):hunk[j].slice(1),match=text.match(declaration);
+    if(!match)continue;
+    if(match[1]===name&&(arity===null||parameterCount(match[2])===arity))found.add(JSON.stringify(parameterTypes(match[2],true)));
+    break;
+   }
+  }
+  hunk=[];
+ };
+ for(const line of packet.source_diff.content.split('\n')){
+  if(line.startsWith('diff --git ')){scan();active=line===`diff --git a/${item.file} b/${item.file}`;continue;}
+  if(!active)continue;
+  if(/^[+-]\s*import\s/.test(line))importsChanged=true;
+  if(line.startsWith('@@')){scan();hunk=[line];}
+  else if(hunk.length&&/^[ +-]/.test(line))hunk.push(line);
+ }
+ scan();
+ if(found.size!==1)return null;
+ const types=JSON.parse([...found][0]);
+ return types.includes(null)?null:{types,importsChanged};
+}
+// Within one Java file a simple type name refers to exactly one type, so the PR's own declaration may
+// name a parameter by its simple name. That holds only while the PR leaves the file's imports alone.
+function resolveDeclared(terrain,file,name,arity,declared){
+ const candidates=terrain.methods.map((row,i)=>[row,i]).filter(([row])=>terrain.files?.[row[1]]===file&&
+  (row[2]===name||name.endsWith('.'+row[2])||row[2].endsWith('.'+name))&&rowArity(row)===declared.types.length&&(arity===null||rowArity(row)===arity));
+ const verdict=(type,recorded)=>{
+  const same=sameType(type,recorded);
+  if(same!==null)return same;
+  return !declared.importsChanged&&!type.includes('.')&&typeof recorded==='string'&&recorded.split('.').pop()===type?true:null;
+ };
+ const compared=candidates.map(([row,i])=>({i,matches:declared.types.map((type,k)=>verdict(type,terrain.argument_types?.[(row[8]||[])[k]]))}))
+  .filter(({matches})=>!matches.includes(false));
+ if(compared.length!==1||compared[0].matches.includes(null))return null;
+ return {rows:[compared[0].i]};
+}
 function changedFlowRows(terrain,map,packet){
  const rows=new Set();
  for(const flow of packet?.flows||[]){
@@ -130,6 +178,13 @@ function findingImpact(item,packet){
   const matches=patchMethods(item,packet).map(({name,arity,types})=>resolveMethod(terrain,map,item.file,name,arity,null,types));
   resolved={rows:[...new Set(matches.flatMap(match=>match.rows))],ambiguous:matches.some(match=>match.ambiguous)};
   inferred=resolved.rows.length>0;
+ }
+ let declaredFromPatch=false;
+ if(resolved.ambiguous&&item.methodRef&&refTypes(item.methodRef)===null){
+  const name=ownerName(item.methodRef),arity=refArity(item.methodRef);
+  const declared=declaredTypes(item,packet,name.split('.').pop(),arity);
+  const match=declared&&resolveDeclared(terrain,item.file,name,arity,declared);
+  if(match){resolved=match;declaredFromPatch=true;}
  }
  if(resolved.ambiguous)return {status:'ambiguous'};
  const origins=resolved.rows;
@@ -152,7 +207,7 @@ function findingImpact(item,packet){
  const path=i=>{const names=[];for(let at=i;at!==null;at=reached.get(at).next)names.push(terrain.methods[at][2]);return names;};
  const rows=found.map(i=>({...node(i),depth:reached.get(i).depth,path:path(i),
   crossService:terrain.methods[i][3]!==terrain.methods[origins[0]][3],test:isTest(terrain.files?.[terrain.methods[i][1]]),demonstrated:changed.has(i)&&!originSet.has(i)}));
- return {status:'mapped',origin,origins:origins.map(node),inferred,callers:rows,truncated:found.length>=MAX_CALLERS};
+ return {status:'mapped',origin,origins:origins.map(node),inferred,declaredFromPatch,callers:rows,truncated:found.length>=MAX_CALLERS};
 }
 
 function findingImpactMarkup(item,packet){
@@ -169,6 +224,7 @@ function findingImpactMarkup(item,packet){
  return `<section class="finding-impact" aria-labelledby="finding-impact-heading"><h4 id="finding-impact-heading">Impact of this change</h4>
   <p class="impact-origin">Changed here: ${impact.origins.map(button).join(', ')}<span class="impact-service">${escapeHtml(placeName(impact.origin))}</span><button type="button" class="impact-map" data-impact-method="${escapeHtml(impact.origin.id)}">Show on impact map</button></p>
   ${impact.inferred?'<p class="impact-note">The finding records only its file; this method is the one whose changed lines match its recorded facts.</p>':''}
+  ${impact.declaredFromPatch?'<p class="impact-note">The finding records the method without parameter types; they come from this PR’s declaration of it.</p>':''}
   ${impact.callers.length?group('Other services that call it',other)+group('Same service',same)+group('Tests that call it',tests)+(impact.truncated?`<p class="impact-note">Showing the first ${MAX_CALLERS} callers.</p>`:''):'<p>No other method calls this one in the recorded call graph.</p>'}
   ${note}</section>`;
 }
