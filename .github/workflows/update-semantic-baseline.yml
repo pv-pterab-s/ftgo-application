@@ -28,19 +28,22 @@ concurrency:
   cancel-in-progress: false
 jobs:
   update:
+    if: vars.CODEINTENT_BASELINE_READY == 'true'
     if: >-
       github.ref == 'refs/heads/master' && (github.event_name == 'workflow_dispatch'
       || github.event.action != 'closed' || github.event.pull_request.merged)
     environment: baseline-maintenance
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(vars.CODEINTENT_RUNNER_LABELS || '"ubuntu-24.04"') }}
     timeout-minutes: 12
     steps:
       # No checkout: PR sources are fetched and parsed by the trusted backend.
       - name: Prepare or publish the exact semantic candidate
         env:
-          BASELINE_API_URL: https://usks4zwyp4.execute-api.us-east-1.amazonaws.com/prod/baseline-maintenance
+          BASELINE_API_URL: ${{ vars.CODEINTENT_BASELINE_API_URL || 'https://usks4zwyp4.execute-api.us-east-1.amazonaws.com/prod/baseline-maintenance' }}
+          CODEINTENT_PRIVATE_ENDPOINT_CONFIGURED: ${{ vars.CODEINTENT_BASELINE_API_URL != '' }}
           BASELINE_API_KEY: ${{ secrets.BASELINE_API_KEY }}
           GH_TOKEN: ${{ github.token }}
+          GH_ENTERPRISE_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pull_request }}
           OPERATION: ${{ inputs.operation || (github.event.action == 'closed' && 'publish' || 'prepare') }}
@@ -53,6 +56,9 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import html, json, os, re, subprocess, time, urllib.error, urllib.parse, urllib.request
+          os.environ['GH_HOST'] = urllib.parse.urlsplit(os.environ.get('GITHUB_SERVER_URL', 'https://github.com')).netloc
+          if os.environ['GH_HOST'] != 'github.com' and os.environ['CODEINTENT_PRIVATE_ENDPOINT_CONFIGURED'] != 'true':
+              raise SystemExit('Configure CODEINTENT_BASELINE_API_URL for this private installation.')
           repo = os.environ['REPOSITORY']
           number = os.environ['PR_NUMBER']
           automatic = os.environ['AUTOMATIC'] == 'true'
@@ -67,13 +73,38 @@ jobs:
               pr = json.loads(subprocess.check_output(['gh', 'api', 'repos/' + repo + '/pulls/' + number]))
               payload['commit'] = pr['head']['sha']
               payload['obligation_changes'] = json.loads(os.environ['OBLIGATION_CHANGES'])
-          def call(method, body):
+          def call(method, body, timeout=30):
               endpoint = url if method == 'POST' else url + '?' + urllib.parse.urlencode(body)
               request = urllib.request.Request(endpoint, method=method,
                   data=json.dumps(body).encode() if method == 'POST' else None,
                   headers={'x-api-key': key, 'Content-Type': 'application/json'})
-              with urllib.request.urlopen(request, timeout=30) as response:
+              with urllib.request.urlopen(request, timeout=timeout) as response:
                   return json.load(response)
+          def retrieve_status(body, deadline):
+              # Retry reads only; never replay a prepare or publish mutation.
+              for retry in range(3):
+                  remaining = deadline - time.monotonic()
+                  if remaining <= 0:
+                      raise SystemExit('Baseline status retrieval unavailable: polling deadline exceeded.')
+                  try:
+                      result = call('GET', body, timeout=min(30, remaining))
+                  except urllib.error.HTTPError as exc:
+                      if exc.code not in (408, 429, 500, 502, 503, 504):
+                          raise SystemExit(f'Baseline status retrieval unavailable: HTTP {exc.code}.')
+                  except (urllib.error.URLError, TimeoutError):
+                      pass
+                  except (ValueError, UnicodeError):
+                      raise SystemExit('Baseline status retrieval unavailable: invalid JSON response.')
+                  else:
+                      if not isinstance(result, dict) or result.get('status') not in (
+                              'pending', 'queued', 'running', 'candidate_ready', 'published', 'skipped', 'failed'):
+                          raise SystemExit('Baseline status retrieval unavailable: invalid status response.')
+                      return result
+                  if retry == 2:
+                      raise SystemExit('Baseline status retrieval unavailable after three attempts; candidate outcome is unknown.')
+                  delay = min(2 ** (retry + 1), max(0, deadline - time.monotonic()))
+                  print('Baseline status retrieval unavailable; retrying the same job read.')
+                  time.sleep(delay)
           MARKER = '<!-- codeintent-semantic-baseline -->'
           def pr_comment(text):
               # One comment per PR, updated on every push, so reviewers always see the current candidate.
@@ -99,8 +130,9 @@ jobs:
               if automatic:
                   not_eligible('The baseline service refused the request: ' + detail)
               raise SystemExit(f'Baseline service returned HTTP {exc.code}: {detail}')
+          deadline = time.monotonic() + 600
           for attempt in range(60):
-              result = call('GET', {'repository': repo, 'operation': 'semantic_status', 'job': queued['job']})
+              result = retrieve_status({'repository': repo, 'operation': 'semantic_status', 'job': queued['job']}, deadline)
               if result['status'] in ('candidate_ready', 'published', 'skipped'):
                   text = json.dumps(result, indent=2)
                   print(text)
@@ -126,9 +158,7 @@ jobs:
                   if automatic:
                       not_eligible(result.get('error', 'unknown error'))
                   raise SystemExit('Semantic baseline failed: ' + result.get('error', 'unknown'))
-              time.sleep(10)
+              time.sleep(min(10, max(0, deadline - time.monotonic())))
           else:
-              if automatic:
-                  not_eligible('Candidate preparation timed out; push again or run this workflow manually.')
-              raise SystemExit('Timed out. Retry the same request; no unreviewed baseline is accepted.')
+              raise SystemExit('Baseline polling timed out; candidate outcome is unknown. Check the same job before submitting another request.')
           PY

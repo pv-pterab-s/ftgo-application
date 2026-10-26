@@ -23,13 +23,14 @@ concurrency:
 
 jobs:
   settle:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CODEINTENT_RUNNER_LABELS || '"ubuntu-latest"') }}
     timeout-minutes: 5
     steps:
       - name: Settle this pull request's rule exceptions
         env:
           API_URL: ${{ vars.CODEINTENT_DECISIONS_URL || 'https://qgd63ljozc.execute-api.us-east-1.amazonaws.com/demo/disputes' }}
           API_KEY: ${{ secrets.DRIFT_GATE_API_KEY }}
+          CODEINTENT_PRIVATE_ENDPOINT_CONFIGURED: ${{ vars.CODEINTENT_DECISIONS_URL != '' }}
           REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         shell: bash
@@ -38,6 +39,8 @@ jobs:
           python3 - <<'PY'
           import json, os, time, urllib.error, urllib.request
           env = os.environ
+          if env.get('GITHUB_SERVER_URL', 'https://github.com') != 'https://github.com' and env['CODEINTENT_PRIVATE_ENDPOINT_CONFIGURED'] != 'true':
+              raise SystemExit('Configure CODEINTENT_DECISIONS_URL for this private installation.')
           if not env['API_KEY']:
               raise SystemExit('::error::Configure the DRIFT_GATE_API_KEY repository secret.')
           payload = {'action': 'settle_rule_changes', 'repository': env['REPOSITORY'],

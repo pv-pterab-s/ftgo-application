@@ -20,8 +20,8 @@ concurrency:
   cancel-in-progress: false
 jobs:
   update:
-    if: contains(fromJSON('["scottswindell-hub/ftgo-application","Holonic-Technologies/ftgo-application"]'), github.repository) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    runs-on: ubuntu-latest
+    if: contains(fromJSON(vars.CODEINTENT_REVIEW_REPOSITORIES || '["pv-pterab-s/ftgo-application","scottswindell-hub/ftgo-application","Holonic-Technologies/ftgo-application"]'), github.repository) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ${{ fromJSON(vars.CODEINTENT_RUNNER_LABELS || '"ubuntu-latest"') }}
     timeout-minutes: 5
     steps:
       - name: Refresh the bot message from recorded review decisions
@@ -30,6 +30,10 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ inputs.pull_request }}
           HEAD_SHA: ${{ inputs.head_sha }}
+          STATUS_API_URL: ${{ vars.CODEINTENT_STATUS_API_URL || 'https://qgd63ljozc.execute-api.us-east-1.amazonaws.com/demo/status' }}
+          STATUS_PAGE_URL: ${{ vars.CODEINTENT_STATUS_PAGE_URL || format('https://{0}.github.io/{1}/', github.repository_owner, github.event.repository.name) }}
+          CODEINTENT_PRIVATE_ENDPOINTS_CONFIGURED: ${{ vars.CODEINTENT_STATUS_API_URL != '' && vars.CODEINTENT_STATUS_PAGE_URL != '' }}
+          CODEINTENT_BOT_LOGIN: ${{ vars.CODEINTENT_BOT_LOGIN || 'github-actions[bot]' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -37,10 +41,14 @@ jobs:
           import json, os, re, urllib.request
           from urllib.parse import urlencode
           repo, number, sha = os.environ['REPOSITORY'], os.environ['PR_NUMBER'], os.environ['HEAD_SHA']
+          if os.environ.get('GITHUB_SERVER_URL', 'https://github.com') != 'https://github.com' and os.environ['CODEINTENT_PRIVATE_ENDPOINTS_CONFIGURED'] != 'true':
+              raise SystemExit('Configure the private CODEINTENT_STATUS_API_URL and CODEINTENT_STATUS_PAGE_URL.')
+          status_url = os.environ['STATUS_API_URL'].rstrip('/')
+          page_url = os.environ['STATUS_PAGE_URL'].rstrip('/') + '/'
           if not number.isdigit() or int(number) < 1 or not re.fullmatch(r'[0-9a-f]{40}', sha):
               raise SystemExit('Invalid PR or commit identity')
           def github(path, method='GET', body=None):
-              request = urllib.request.Request('https://api.github.com' + path, method=method,
+              request = urllib.request.Request(os.environ.get('GITHUB_API_URL', 'https://api.github.com').rstrip('/') + path, method=method,
                   headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json',
                            'Content-Type': 'application/json', 'X-GitHub-Api-Version': '2022-11-28'},
                   data=json.dumps(body).encode() if body is not None else None)
@@ -54,7 +62,7 @@ jobs:
           bot = None
           for page in range(1, 11):
               comments = github(f'/repos/{repo}/issues/{number}/comments?per_page=100&page={page}')
-              bot = next((c for c in comments if c.get('user', {}).get('login') == 'github-actions[bot]'
+              bot = next((c for c in comments if c.get('user', {}).get('login') == os.environ['CODEINTENT_BOT_LOGIN']
                           and '<!-- codeintent-checks -->' in c.get('body', '')), None)
               if bot or len(comments) < 100:
                   break
@@ -64,7 +72,7 @@ jobs:
               raise SystemExit('PR changed before refresh; refusing a stale message update')
           if bot:
               owner, name = repo.split('/', 1)
-              spinner = f'<img src="https://{owner.lower()}.github.io/{name}/assets/checks-running.gif" width="20" height="20" alt="Updating review">'
+              spinner = f'<img src="{page_url}assets/checks-running.gif" width="20" height="20" alt="Updating review">'
               heading = '### CodeIntent checks -- ' + spinner + ' Updating review…'
               pending = re.sub(r'^### CodeIntent checks[^\n]*', lambda _: heading, bot['body'], count=1, flags=re.MULTILINE)
               if pending == bot['body']:
@@ -74,7 +82,7 @@ jobs:
               query = {'repo': repo, 'sha': sha, 'detail': 'review-comment'}
               if bot:
                   query['comment'] = str(bot['id'])
-              url = 'https://qgd63ljozc.execute-api.us-east-1.amazonaws.com/demo/status?' + urlencode(query)
+              url = status_url + '?' + urlencode(query)
               with urllib.request.urlopen(url, timeout=30) as response:
                   document = json.load(response)
               if document.get('head_sha') != sha or document.get('pull_request') != int(number) or not current():
@@ -97,9 +105,9 @@ jobs:
                              if state == 'success' else 'Finding-review authority is unavailable'
                              if state == 'error' else f'{accepted} of {required} review finding(s) accepted')
               owner, name = repo.split('/', 1)
-              report = f'https://{owner.lower()}.github.io/{name}/?' + urlencode(
+              report = page_url + '?' + urlencode(
                   {'repo': repo, 'pr': number, 'sha': sha,
-                   'api': 'https://qgd63ljozc.execute-api.us-east-1.amazonaws.com/demo'})
+                   'api': status_url.rsplit('/status', 1)[0]})
               github(f'/repos/{repo}/statuses/{sha}', 'POST', {
                   'state': state, 'context': 'CodeIntent / Finding review',
                   'description': description[:140], 'target_url': report})

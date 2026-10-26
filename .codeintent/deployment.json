@@ -1,0 +1,8 @@
+{
+  "repository": "pv-pterab-s/ftgo-application",
+  "api": "https://ieg4z2l09g.execute-api.us-east-2.amazonaws.com/prod",
+  "aws_account": "962500057659",
+  "aws_region": "us-east-2",
+  "baseline_status": "onboarding_required",
+  "verification": "not_run"
+}

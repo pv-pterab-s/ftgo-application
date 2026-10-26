@@ -37,20 +37,37 @@ concurrency:
 
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    # Set CODEINTENT_RUNNER_LABELS to a JSON array of customer runner labels.
+    runs-on: ${{ fromJSON(vars.CODEINTENT_RUNNER_LABELS || '"ubuntu-latest"') }}
     timeout-minutes: 15
     env:
       API_URL: ${{ vars.CODEINTENT_API_URL || 'https://qgd63ljozc.execute-api.us-east-1.amazonaws.com/demo/verify-checks' }}
       STATUS_API_URL: ${{ vars.CODEINTENT_STATUS_API_URL || 'https://qgd63ljozc.execute-api.us-east-1.amazonaws.com/demo/status' }}
       STATUS_PAGE_URL: ${{ vars.CODEINTENT_STATUS_PAGE_URL || format('https://{0}.github.io/{1}/', github.repository_owner, github.event.repository.name) }}
-      FTGO_DEMO_REPOSITORIES: scottswindell-hub/ftgo-application,Holonic-Technologies/ftgo-application
+      FTGO_DEMO_REPOSITORIES: pv-pterab-s/ftgo-application,scottswindell-hub/ftgo-application,Holonic-Technologies/ftgo-application
       API_KEY: ${{ secrets.DRIFT_GATE_API_KEY }}
       GH_TOKEN: ${{ github.token }}
+      GH_ENTERPRISE_TOKEN: ${{ github.token }}
+      CODEINTENT_BOT_LOGIN: ${{ vars.CODEINTENT_BOT_LOGIN || 'github-actions[bot]' }}
+      CODEINTENT_PRIVATE_ENDPOINTS_CONFIGURED: ${{ vars.CODEINTENT_API_URL != '' && vars.CODEINTENT_STATUS_API_URL != '' && vars.CODEINTENT_STATUS_PAGE_URL != '' }}
       PR_OWNER: ${{ github.repository_owner }}
       PR_REPO: ${{ github.event.repository.name }}
       PR_FULL_REPO: ${{ github.repository }}
 
     steps:
+      - name: Configure GitHub installation
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from urllib.parse import urlsplit
+          host = urlsplit(os.environ['GITHUB_SERVER_URL']).netloc
+          if host != 'github.com' and os.environ['CODEINTENT_PRIVATE_ENDPOINTS_CONFIGURED'] != 'true':
+              raise SystemExit('Configure CODEINTENT_API_URL, CODEINTENT_STATUS_API_URL, and CODEINTENT_STATUS_PAGE_URL for this private installation.')
+          with open(os.environ['GITHUB_ENV'], 'a') as environment:
+              environment.write('GH_HOST=' + host + '\n')
+          PY
+
       # The PR's details come from the API, for a PR event and a manual run alike.
       - name: Resolve the pull request
         env:
@@ -82,7 +99,7 @@ jobs:
           ## <img src=\"${STATUS_PAGE_URL%/}/assets/checks-running.gif\" width=\"28\" height=\"28\" alt=\"Checks running\"> Analysis in progress
 
           Review links will appear when analysis finishes."
-          comment_id=$(gh api "repos/$PR_FULL_REPO/issues/$PR_NUMBER/comments" --paginate --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"$marker\"))) | .id" | head -1 || true)
+          comment_id=$(gh api "repos/$PR_FULL_REPO/issues/$PR_NUMBER/comments" --paginate --jq ".[] | select(.user.login == \"$CODEINTENT_BOT_LOGIN\" and (.body | contains(\"$marker\"))) | .id" | head -1 || true)
           if [ -n "$comment_id" ]; then
             gh api --method PATCH "repos/$PR_FULL_REPO/issues/comments/$comment_id" -f body="$body" >/dev/null || \
               echo "::warning::Could not update the live-status PR comment."
@@ -137,7 +154,8 @@ jobs:
           sha = os.environ["PR_SHA"]
           max_file = int(os.environ.get("STANDARDS_MAX_FILE_BYTES", "60000"))
           # API Gateway invokes the Lambda asynchronously, so the whole request
-          # (diff included) must fit the much smaller async payload limit.
+          # (diff included) must fit Lambda's 1 MiB async invocation limit.
+          # This source cap is separate from the serialized request budget.
           max_total = int(os.environ.get("STANDARDS_MAX_TOTAL_BYTES", "200000"))
 
 
@@ -170,6 +188,19 @@ jobs:
           change_stats['files'] = [{'path': row['filename'], 'additions': row['additions'],
                                    'deletions': row['deletions'], 'status': row['status']}
                                   for row in changed_rows]
+          semantic_configuration = []
+          def configuration_path(path):
+              import re
+              return bool(re.fullmatch(r"(?:.*/)?src/main/resources/(?:config/)?application(?:-[^/]+)?\.(?:properties|ya?ml)", path or ""))
+          for row in changed_rows:
+              path, status = row["filename"], row["status"]
+              if status == "renamed":
+                  previous = row.get("previous_filename")
+                  if configuration_path(previous):
+                      semantic_configuration.append({"path": previous, "status": "removed"})
+                  status = "added"
+              if configuration_path(path):
+                  semantic_configuration.append({"path": path, "status": {"changed": "modified", "copied": "added"}.get(status, status)})
           semantic_java = []
           for row in changed_rows:
               path = row["filename"]
@@ -213,7 +244,7 @@ jobs:
           with open("/tmp/standards-input.json", "w", encoding="utf-8") as stream:
               json.dump({
                   "standards": {"files_omitted": omitted, "exceptions": exceptions},
-                  "semantic_changes": {"java": semantic_java, "files_omitted": omitted},
+                  "semantic_changes": {"java": semantic_java, "configuration": semantic_configuration, "files_omitted": omitted},
                   "pr_change_stats": change_stats,
                   "files": files,
               }, stream)
@@ -247,7 +278,8 @@ jobs:
               'head_sha': payload['sha'], 'sha256': hashlib.sha256(diff.encode('utf-8')).hexdigest(),
               'bytes': len(diff.encode('utf-8')), 'files': payload['pr_change_stats']['changed_files'],
           }
-          if len(json.dumps(payload).encode('utf-8')) > 240000:
+          MAX_ANALYSIS_PAYLOAD_BYTES = 1_000_000
+          if len(json.dumps(payload).encode('utf-8')) > MAX_ANALYSIS_PAYLOAD_BYTES:
               # Keep complete size metadata; do not pretend a clipped diff was analyzed.
               excerpt = payload.get('diff', '')[:24000]
               while len(json.dumps(excerpt).encode('utf-8')) > 24000:
@@ -255,14 +287,22 @@ jobs:
               payload['fallback_diff'] = excerpt
               payload.update(diff='', files={}, reviewability_only=True,
                              standards={}, semantic_changes={})
-              if len(json.dumps(payload).encode('utf-8')) > 240000:
+              if len(json.dumps(payload).encode('utf-8')) > MAX_ANALYSIS_PAYLOAD_BYTES:
                   payload['pr_change_stats']['files'] = []
-          with open("/tmp/codeintent-payload.json", "w", encoding="utf-8") as stream:
-              json.dump(payload, stream)
+          encoded_payload = json.dumps(payload).encode("utf-8")
+          if len(encoded_payload) > MAX_ANALYSIS_PAYLOAD_BYTES:
+              raise SystemExit(
+                  f"Full PR analysis input is {len(encoded_payload)} bytes; "
+                  f"the transport budget is {MAX_ANALYSIS_PAYLOAD_BYTES}. "
+                  "Split the PR or use an external-source transport; "
+                  "no partial analysis request was submitted.")
+          with open("/tmp/codeintent-payload.json", "wb") as stream:
+              stream.write(encoded_payload)
           PY
 
           for attempt in 1 2 3 4 5; do
             code=$(curl -sS -o /tmp/codeintent-response.json -w '%{http_code}' \
+              -H "x-codeintent-delivery: ${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}" \
               -X POST "$API_URL" -H 'Content-Type: application/json' \
               -H "x-api-key: $API_KEY" -d @/tmp/codeintent-payload.json)
             case "$code" in
@@ -288,10 +328,41 @@ jobs:
           set -euo pipefail
           deadline=$((SECONDS + 840))
           while (( SECONDS < deadline )); do
-            document=$(curl -fsS --get "$STATUS_API_URL" \
-              --data-urlencode "sha=$PR_SHA" --data-urlencode "repo=$PR_FULL_REPO" || true)
-            if [ -z "$document" ]; then document='{}'; fi
-            state=$(jq -r '.state // "absent"' <<<"$document")
+            # A failed read is not an absent run. Bound each GET by the polling deadline.
+            remaining=$((deadline - SECONDS))
+            if (( remaining <= 0 )); then break; fi
+            request_timeout=$((remaining < 30 ? remaining : 30))
+            response_file=$(mktemp)
+            if http_code=$(curl -sS --max-time "$request_timeout" -o "$response_file" -w '%{http_code}' --get "$STATUS_API_URL" \
+              --data-urlencode "sha=$PR_SHA" --data-urlencode "repo=$PR_FULL_REPO"); then
+              transport_ok=true
+            else
+              transport_ok=false
+            fi
+            document=$(cat "$response_file")
+            rm -f "$response_file"
+            if [ "$transport_ok" != true ] || [ "$http_code" != 200 ]; then
+              if [ "$transport_ok" = true ]; then
+                case "$http_code" in
+                  408|429|500|502|503|504) ;;
+                  *) echo "::error::CodeIntent status retrieval unavailable (HTTP $http_code)."; exit 1 ;;
+                esac
+              fi
+              retrieval_failures=$((${retrieval_failures:-0} + 1))
+              echo "CodeIntent state: retrieval_unavailable — $DASHBOARD_URL"
+              if (( retrieval_failures >= 3 )); then
+                echo "::error::CodeIntent status retrieval unavailable after three attempts; analysis outcome is unknown."
+                exit 1
+              fi
+              sleep $((deadline - SECONDS < 5 ? (deadline - SECONDS > 0 ? deadline - SECONDS : 0) : 5))
+              continue
+            fi
+            if ! jq -e 'type == "object" and (.state == "absent" or .state == "in_progress" or .state == "completed")' <<<"$document" >/dev/null; then
+              echo "::error::CodeIntent status retrieval unavailable: invalid status response."
+              exit 1
+            fi
+            retrieval_failures=0
+            state=$(jq -r '.state' <<<"$document")
             started_at=$(jq -r '.started_at // empty' <<<"$document")
             pipeline=$(jq -r '.pipeline // empty' <<<"$document")
 
@@ -337,7 +408,7 @@ jobs:
               fi
               echo "[Open the live report ↗]($DASHBOARD_URL)" >> "$GITHUB_STEP_SUMMARY"
               printf '%s' "$document" > /tmp/codeintent-status.json
-              comment_id=$(gh api "repos/$PR_FULL_REPO/issues/$PR_NUMBER/comments" --paginate --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- codeintent-checks -->"))) | .id' | head -1 || true)
+              comment_id=$(gh api "repos/$PR_FULL_REPO/issues/$PR_NUMBER/comments" --paginate --jq ".[] | select(.user.login == \"$CODEINTENT_BOT_LOGIN\" and (.body | contains(\"<!-- codeintent-checks -->\"))) | .id" | head -1 || true)
               export CODEINTENT_COMMENT_ID="$comment_id"
               python3 <<'PY' > /tmp/codeintent-comment.md
           """One compact GitHub comment over native results and separate acceptance policy."""
@@ -347,7 +418,8 @@ jobs:
           
           MARKER = '<!-- codeintent-checks -->'
           ICONS = {'passed':'✅','failed':'❌','error':'⚠️','stopped':'➖','blocked':'➖','pending':'⏳','running':'⏳'}
-          DEFAULT_FTGO_REPOSITORIES = ('scottswindell-hub/ftgo-application',
+          DEFAULT_FTGO_REPOSITORIES = ('pv-pterab-s/ftgo-application',
+                                       'scottswindell-hub/ftgo-application',
                                        'Holonic-Technologies/ftgo-application')
           
           
@@ -390,7 +462,7 @@ jobs:
                   query=[(k,v) for k,v in parse_qsl(url.query,keep_blank_values=True) if k not in {'view','check','issue','item'}]
                   query.extend([('view','desc'),('check',check['id']),('issue',issue or '')])
                   target=urlunsplit((url.scheme,url.netloc,url.path,urlencode(query),''))
-                  suffix=(' — intended; governance violation remains' if finding.get('category')=='governed_boundary_violation' else ' — intended, recorded') if decision=='accepted' else ' — unresolved' if decision=='unresolved' else ' — needs review'
+                  suffix=(' — intended; governance violation remains' if finding.get('category')=='governed_boundary_violation' else ' — intended, recorded') if decision=='accepted' else ' — reported incorrect, sent to Holonic' if decision=='unresolved' else ' — needs review'
                   if finding.get('sema_id'):
                       description = ' '.join(str(finding.get('sema_description') or
                           ((finding.get('title') or finding.get('name') or 'Finding') + ' — English description unavailable')).split())

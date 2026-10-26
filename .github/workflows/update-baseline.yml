@@ -1,3 +1,4 @@
+# Automatic publication is deferred until repository-specific baseline onboarding.
 name: Update baseline
 on:
   workflow_dispatch:
@@ -6,9 +7,6 @@ on:
         description: Full merged master commit (blank uses the triggering master revision)
         type: string
         required: false
-  push:
-    branches: [master]
-    paths: ['.github/workflows/*.yml', '.github/workflows/*.yaml', 'README.md', 'README.adoc', 'README.rst', 'README.txt', 'docs/**/*.md', 'docs/**/*.adoc', 'docs/**/*.rst', 'docs/**/*.txt']
 permissions:
   contents: read
 concurrency:
@@ -16,14 +14,14 @@ concurrency:
   cancel-in-progress: false
 jobs:
   update:
-    if: github.ref == 'refs/heads/master'
+    if: vars.CODEINTENT_BASELINE_READY == 'true' && github.ref == 'refs/heads/master'
     environment: baseline-maintenance
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(vars.CODEINTENT_RUNNER_LABELS || '"ubuntu-24.04"') }}
     timeout-minutes: 12
     steps:
       - name: Request and verify baseline publication
         env:
-          BASELINE_API_URL: https://usks4zwyp4.execute-api.us-east-1.amazonaws.com/prod/baseline-maintenance
+          BASELINE_API_URL: ${{ vars.CODEINTENT_BASELINE_API_URL || vars.BASELINE_API_URL }}
           BASELINE_API_KEY: ${{ secrets.BASELINE_API_KEY }}
           REPOSITORY: ${{ github.repository }}
           TARGET_COMMIT: ${{ inputs.commit || github.sha }}

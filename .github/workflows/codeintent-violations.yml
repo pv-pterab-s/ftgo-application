@@ -31,7 +31,7 @@ jobs:
       github.event.comment.user.type != 'Bot'
       && (github.event_name == 'pull_request_review_comment' || github.event.issue.pull_request)
       && (contains(github.event.comment.body, '/reject') || contains(github.event.comment.body, '/false-positive') || contains(github.event.comment.body, '/codeintent-review'))
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CODEINTENT_RUNNER_LABELS || '"ubuntu-latest"') }}
     timeout-minutes: 10
     steps:
       - name: Record the decision and reply
@@ -39,6 +39,9 @@ jobs:
           API_URL: ${{ vars.CODEINTENT_DECISIONS_URL || 'https://qgd63ljozc.execute-api.us-east-1.amazonaws.com/demo/disputes' }}
           API_KEY: ${{ secrets.DRIFT_GATE_API_KEY }}
           GH_TOKEN: ${{ github.token }}
+          GH_ENTERPRISE_TOKEN: ${{ github.token }}
+          CODEINTENT_BOT_LOGIN: ${{ vars.CODEINTENT_BOT_LOGIN || 'github-actions[bot]' }}
+          CODEINTENT_PRIVATE_ENDPOINT_CONFIGURED: ${{ vars.CODEINTENT_DECISIONS_URL != '' }}
           REPOSITORY: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
           PR_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
@@ -52,7 +55,11 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import json, os, subprocess, urllib.error, urllib.request
+          from urllib.parse import urlsplit
           env = os.environ
+          env['GH_HOST'] = urlsplit(env.get('GITHUB_SERVER_URL', 'https://github.com')).netloc
+          if env['GH_HOST'] != 'github.com' and env['CODEINTENT_PRIVATE_ENDPOINT_CONFIGURED'] != 'true':
+              raise SystemExit('Configure CODEINTENT_DECISIONS_URL for this private installation.')
           repo, number, actor = env['REPOSITORY'], env['PR_NUMBER'], env['ACTOR']
 
           def gh(*args, payload=None):
@@ -88,7 +95,7 @@ jobs:
               if latest.get('head', {}).get('sha') != result.get('head_sha'):
                   raise SystemExit('::warning::PR changed after recording; reload the latest review.')
               pages = json.loads(gh('--paginate', '--slurp', f'repos/{repo}/issues/{number}/comments?per_page=100') or '[]')
-              bot = next((c for page in pages for c in page if c.get('user', {}).get('login') == 'github-actions[bot]'
+              bot = next((c for page in pages for c in page if c.get('user', {}).get('login') == env['CODEINTENT_BOT_LOGIN']
                           and '<!-- codeintent-checks -->' in c.get('body', '')), None)
               if not bot or gh('--method', 'PATCH', f'repos/{repo}/issues/comments/{bot["id"]}',
                                payload={'body': result['comment_body']}) is None:

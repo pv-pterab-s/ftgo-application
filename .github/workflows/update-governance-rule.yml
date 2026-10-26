@@ -18,10 +18,11 @@ permissions:
 
 jobs:
   update-rule:
-    runs-on: ubuntu-latest
+    if: vars.CODEINTENT_BASELINE_READY == 'true'
+    runs-on: ${{ fromJSON(vars.CODEINTENT_RUNNER_LABELS || '"ubuntu-latest"') }}
     environment: governance-rules-${{ inputs.operation }}
     env:
-      GOVERNANCE_LEDGER_API_URL: https://pnbiguovftpmrkck4mz3ey6fau0zawob.lambda-url.us-east-1.on.aws
+      GOVERNANCE_LEDGER_API_URL: ${{ vars.GOVERNANCE_LEDGER_API_URL }}
       GOVERNANCE_RULE_API_KEY: ${{ secrets.GOVERNANCE_RULE_API_KEY }}
       ARGUMENTS_JSON: ${{ inputs.arguments }}
     steps:
