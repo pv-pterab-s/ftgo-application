@@ -18,7 +18,7 @@ function recorded(target,body){
  const r=target?.finding.review;
  return !!r?.record&&['accepted','unresolved'].includes(r.decision)&&body.includes(`<!-- codeintent-review:${r.scope}:${r.decision}:${r.record} -->`);
 }
-const ENDPOINT=root.CODEINTENT_REVIEW_DECISIONS_URL||'https://ieg4z2l09g.execute-api.us-east-2.amazonaws.com/prod/review-decisions';
+const ENDPOINT='https://qgd63ljozc.execute-api.us-east-1.amazonaws.com/demo/review-decisions';
 function createClient(endpoint=ENDPOINT,transport=(...args)=>fetch(...args)){
  async function save(body){
   const response=await transport(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),cache:'no-store',credentials:'omit'});

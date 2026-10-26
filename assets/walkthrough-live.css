@@ -375,3 +375,23 @@ details.quiet summary{cursor:pointer;color:var(--muted)}details.quiet summary b{
 .standard-diff-line{display:grid;grid-template-columns:44px 44px minmax(max-content,1fr);min-height:21px}
 .standard-diff-line .line-no{color:var(--muted);text-align:right;padding:0 10px 0 4px;border-right:1px solid var(--line);user-select:none}
 .standard-diff-line code{font:inherit;white-space:pre;padding:0 12px;color:inherit}
+
+/* Governance finding layout approved in the local visual review. */
+.stage:has(.governance-page){background:transparent;border:0;border-radius:0;box-shadow:none;overflow:visible}
+.screen:has(.governance-page){padding:0;min-height:0}
+.governance-page>.tile{background:var(--panel)}
+.governance-page .tile-head{padding-bottom:10px}
+.governance-page .tile-head h3{font-size:24px;line-height:1.25;font-weight:700}
+.governance-page .governance-intro,.governance-page .governance-consequences,.governance-page .ba,.governance-page .diffs,.governance-page .provenance,.governance-page .finding-impact,.governance-page .compact-evidence{margin:0 16px 20px}
+.governance-page .governance-intro{margin-bottom:8px}
+.governance-page .governance-intro p,.governance-page .governance-consequences p{margin:0;font-weight:400}
+.governance-page .governance-intro b,.governance-page .governance-consequences b{font-weight:700}
+.governance-page .diffs{padding:0;display:grid;grid-template-columns:minmax(0,1fr);gap:20px;align-items:start}
+.governance-page .pane{min-width:0}
+.governance-page .pane header{align-items:center;flex-wrap:wrap}
+.governance-page .pane header span{min-width:0;overflow-wrap:anywhere}
+.governance-page .ba small,.governance-page .provenance summary,.governance-page .pane header h4,.governance-page .finding-impact h4,.governance-page .compact-evidence>h4,.governance-page .holon>b,.governance-page .rx-pane h3,.governance-page .rx-pane h4,.governance-page .rx-pane summary{font:700 14px/1.5 var(--sans);color:var(--ink);letter-spacing:normal;text-transform:none}
+.governance-page .pane header h4{margin:0}
+.governance-page .finding-impact h4{margin:0 0 6px}
+
+.governance-page .ba{padding:0}
