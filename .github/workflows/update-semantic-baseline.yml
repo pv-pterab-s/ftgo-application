@@ -28,9 +28,8 @@ concurrency:
   cancel-in-progress: false
 jobs:
   update:
-    if: vars.CODEINTENT_BASELINE_READY == 'true'
     if: >-
-      github.ref == 'refs/heads/master' && (github.event_name == 'workflow_dispatch'
+      vars.CODEINTENT_BASELINE_READY == 'true' && github.ref == 'refs/heads/master' && (github.event_name == 'workflow_dispatch'
       || github.event.action != 'closed' || github.event.pull_request.merged)
     environment: baseline-maintenance
     runs-on: ${{ fromJSON(vars.CODEINTENT_RUNNER_LABELS || '"ubuntu-24.04"') }}
