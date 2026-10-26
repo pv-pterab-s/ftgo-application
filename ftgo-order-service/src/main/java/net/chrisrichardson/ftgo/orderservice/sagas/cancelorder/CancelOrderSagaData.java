@@ -13,9 +13,10 @@ public class CancelOrderSagaData  {
   private CancelOrderSagaData() {
   }
 
-  public CancelOrderSagaData(long consumerId, long orderId, Money orderTotal) {
+  public CancelOrderSagaData(long consumerId, long orderId, long restaurantId, Money orderTotal) {
     this.consumerId = consumerId;
     this.orderId = orderId;
+    this.restaurantId = restaurantId;
     this.orderTotal = orderTotal;
   }
 
