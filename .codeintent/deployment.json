@@ -1,8 +1,12 @@
 {
   "repository": "pv-pterab-s/ftgo-application",
   "api": "https://ieg4z2l09g.execute-api.us-east-2.amazonaws.com/prod",
+  "page_url": "https://pv-pterab-s.github.io/ftgo-application/",
   "aws_account": "962500057659",
   "aws_region": "us-east-2",
-  "baseline_status": "onboarding_required",
+  "runtime": "standalone review_service",
+  "image": "962500057659.dkr.ecr.us-east-2.amazonaws.com/common-table-codeintent@sha256:596693989752159d3f1ad50433245e9845cc8ab1562f1a97825307d7e63870fd",
+  "baseline_status": "user_supplied_archive_imported_unchanged",
+  "baseline_source_commit": "3f7173407cebe227a5f969eeb824dbe4811073ff",
   "verification": "not_run"
 }
