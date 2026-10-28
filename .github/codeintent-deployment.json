@@ -5,8 +5,16 @@
   "aws_account": "962500057659",
   "aws_region": "us-east-2",
   "runtime": "standalone review_service",
-  "image": "962500057659.dkr.ecr.us-east-2.amazonaws.com/common-table-codeintent@sha256:596693989752159d3f1ad50433245e9845cc8ab1562f1a97825307d7e63870fd",
+  "image": "962500057659.dkr.ecr.us-east-2.amazonaws.com/common-table-codeintent@sha256:dc1fd350490bfb88103be12a30d9a35d4c046af55209505710781f44882ba11f",
   "baseline_status": "user_supplied_archive_imported_unchanged",
   "baseline_source_commit": "3f7173407cebe227a5f969eeb824dbe4811073ff",
-  "verification": "not_run"
+  "verification": "deployment_and_http_checks_passed",
+  "image_functions": [
+    "common-table-codeintent-review",
+    "common-table-codeintent-review-status"
+  ],
+  "pinned_image": "962500057659.dkr.ecr.us-east-2.amazonaws.com/common-table-codeintent@sha256:ca4b00ba3094f120545721f04946b96bb735c0aa2265ece62d03fb79a136a15d",
+  "codeintent_source_branch": "maintenance/main-20261028",
+  "codeintent_source_commit": "ae664157df27b85ee4db19251cd76d6bcafccdb4",
+  "deployed_at": "2026-10-28"
 }
