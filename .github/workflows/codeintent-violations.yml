@@ -25,6 +25,12 @@ concurrency:
   group: codeintent-violations-${{ github.event.issue.number || github.event.pull_request.number }}
   cancel-in-progress: false
 
+# The PR workflow set's version (review_service/VERSIONS.md, "Version numbers"): one number shared by
+# codeintent-checks.yml, codeintent-review-sync.yml and codeintent-violations.yml. When any of the three
+# changes, bump it to the next number (v000, v001, ...) in all three files together.
+env:
+  CODEINTENT_WORKFLOW_VERSION: v000
+
 jobs:
   decide:
     if: >-
@@ -149,11 +155,13 @@ jobs:
                   # Carry the analysis chain over. The entries that described the previous rendering do not describe this
                   # text: the decisions API rendered it and records no version, and this workflow posted it.
                   chain = parse_versions_marker(bot.get('body', '')) or {'schema': 'codeintent-versions-v1', 'components': []}
-                  sha12 = (env.get('GITHUB_WORKFLOW_SHA') or 'unrecorded')[:12]
+                  version = env.get('CODEINTENT_WORKFLOW_VERSION', '')
+                  version = version if re.fullmatch(r'v\d{3}', version) else 'unrecorded'
                   chain['components'] = [c for c in chain['components'] if isinstance(c, dict)
                                          and c.get('id') not in {'renderer', 'page', 'status-service', 'updater'}] + [
-                      {'id': 'renderer', 'name': 'Message renderer', 'version': 'decisions API (unrecorded)'},
-                      {'id': 'updater', 'name': 'Updated by', 'version': 'codeintent-violations.yml@' + sha12}]
+                      {'id': 'renderer', 'name': 'Message renderer', 'version': 'unrecorded', 'detail': {'by': 'decisions API'}},
+                      {'id': 'updater', 'name': 'Updated by', 'version': version,
+                       'detail': {'file': 'codeintent-violations.yml', 'sha': env.get('GITHUB_WORKFLOW_SHA') or 'unrecorded'}}]
                   comment_body = replace_versions_block(comment_body, chain)
               if not bot or gh('--method', 'PATCH', f'repos/{repo}/issues/comments/{bot["id"]}',
                                payload={'body': comment_body}) is None:

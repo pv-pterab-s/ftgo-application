@@ -18,6 +18,13 @@ permissions:
 concurrency:
   group: codeintent-review-sync-${{ inputs.pull_request }}
   cancel-in-progress: false
+
+# The PR workflow set's version (review_service/VERSIONS.md, "Version numbers"): one number shared by
+# codeintent-checks.yml, codeintent-review-sync.yml and codeintent-violations.yml. When any of the three
+# changes, bump it to the next number (v000, v001, ...) in all three files together.
+env:
+  CODEINTENT_WORKFLOW_VERSION: v000
+
 jobs:
   update:
     if: contains(fromJSON(vars.CODEINTENT_REVIEW_REPOSITORIES || '["pv-pterab-s/ftgo-application","scottswindell-hub/ftgo-application","Holonic-Technologies/ftgo-application"]'), github.repository) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -84,6 +91,7 @@ jobs:
           try:
               query = {'repo': repo, 'sha': sha, 'detail': 'review-comment',
                        # Recorded as the "updater" version component (review_service/VERSIONS.md).
+                       'workflow_version': os.environ.get('CODEINTENT_WORKFLOW_VERSION', ''),
                        'workflow_ref': os.environ.get('GITHUB_WORKFLOW_REF', ''),
                        'workflow_sha': os.environ.get('GITHUB_WORKFLOW_SHA', '')}
               if bot:

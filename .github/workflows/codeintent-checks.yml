@@ -35,6 +35,12 @@ concurrency:
   group: codeintent-${{ github.event.pull_request.number || inputs.pull_request }}
   cancel-in-progress: true
 
+# The PR workflow set's version (review_service/VERSIONS.md, "Version numbers"): one number shared by
+# codeintent-checks.yml, codeintent-review-sync.yml and codeintent-violations.yml. When any of the three
+# changes, bump it to the next number (v000, v001, ...) in all three files together.
+env:
+  CODEINTENT_WORKFLOW_VERSION: v000
+
 jobs:
   checks:
     # Set CODEINTENT_RUNNER_LABELS to a JSON array of customer runner labels.
@@ -85,8 +91,10 @@ jobs:
                  "PR_HEAD_REF=\(.head.ref)", "PR_NUMBER=\(.number)"' /tmp/pull-request.json >> "$GITHUB_ENV"
           { echo 'PR_TITLE<<CODEINTENT_TITLE_EOF'; jq -r .title /tmp/pull-request.json; echo 'CODEINTENT_TITLE_EOF'; } >> "$GITHUB_ENV"
 
-      # The published review page's own version (assets/release.json, review_service/VERSIONS.md).
-      # A page without the record, or an unreachable one, is "unrecorded", never a guess.
+      # The published review page's own version (assets/release.json, review_service/VERSIONS.md):
+      # its ui_version number (v000, v001, ...), or its commit's first 12 characters when the release
+      # has no number yet. A page without the record, or an unreachable one, is "unrecorded", never a guess.
+      # Both values are checked against fixed patterns, so neither can carry a newline into GITHUB_ENV.
       - name: Read the review page version
         continue-on-error: true
         run: |
@@ -96,8 +104,16 @@ jobs:
           if ! [[ "$commit" =~ ^[0-9a-f]{7,64}(-dirty)?$ ]]; then
             commit=unrecorded
           fi
-          echo "Review page version: $commit"
+          version=$(jq -r 'if type != "object" or .ui_version == null then empty elif (.ui_version | type) == "string" then .ui_version else "invalid" end' <<<"$release" 2>/dev/null || true)
+          if [ -z "$version" ] && [ "$commit" != unrecorded ]; then
+            version=${commit:0:12}
+          fi
+          if ! [[ "$version" =~ ^v[0-9]{3}$ || "$version" =~ ^[0-9a-f]{12}$ ]]; then
+            version=unrecorded
+          fi
+          echo "Review page version: $version ($commit)"
           echo "PAGE_UI_COMMIT=$commit" >> "$GITHUB_ENV"
+          echo "PAGE_UI_VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Publish analysis progress
         continue-on-error: true
@@ -122,14 +138,19 @@ jobs:
           import base64, json, os
           def inline(value):
               return str(value or '').replace('\n',' ').replace('|','\\|').replace('<','&lt;').replace('>','&gt;')[:300]
+          import re
+          def number(name, commit=False):
+              value=os.environ.get(name,'')
+              ok=re.fullmatch(r'v\d{3}',value) or (commit and re.fullmatch(r'[0-9a-f]{12}',value))
+              return value if ok else 'unrecorded'
           sha=os.environ.get('GITHUB_WORKFLOW_SHA','') or 'unrecorded'
           run=os.environ.get('GITHUB_RUN_ID','') or 'unrecorded'
           attempt=os.environ.get('GITHUB_RUN_ATTEMPT','')
           page=os.environ.get('PAGE_UI_COMMIT','') or 'unrecorded'
-          components=[{'id':'workflow','name':'PR workflow','version':'codeintent-checks.yml@'+sha[:12],
+          components=[{'id':'workflow','name':'PR workflow','version':number('CODEINTENT_WORKFLOW_VERSION'),
                        'detail':{'file':'codeintent-checks.yml','ref':os.environ.get('GITHUB_WORKFLOW_REF','') or 'unrecorded',
                                  'sha':sha,'run':run+'/'+attempt if attempt and run!='unrecorded' else run}},
-                      {'id':'page','name':'Review page','version':page if page=='unrecorded' else page[:12]+('-dirty' if page.endswith('-dirty') else ''),
+                      {'id':'page','name':'Review page','version':number('PAGE_UI_VERSION',commit=True),
                        'detail':{'ui_commit':page}}]
           chain={'schema':'codeintent-versions-v1','components':components}
           data=json.dumps(chain,separators=(',',':'),sort_keys=True,default=str).encode('utf-8')
@@ -319,6 +340,7 @@ jobs:
               **standards_input,
               # Which workflow run asked; the backend records it as the first version component.
               "codeintent_workflow": {
+                  "version": os.environ.get("CODEINTENT_WORKFLOW_VERSION", ""),
                   "file": "codeintent-checks.yml",
                   "ref": os.environ.get("GITHUB_WORKFLOW_REF", ""),
                   "sha": os.environ.get("GITHUB_WORKFLOW_SHA", ""),
@@ -735,6 +757,12 @@ jobs:
           doc['github_comment_id']=os.environ.get('CODEINTENT_COMMENT_ID','')
           # Read-time components (review_service/VERSIONS.md). The backend copies this run's
           # codeintent_workflow into the stored record; an older backend has no record, so add it here.
+          import re
+          def number(name, commit=False):
+              value=os.environ.get(name,'')
+              ok=re.fullmatch(r'v\d{3}',value) or (commit and re.fullmatch(r'[0-9a-f]{12}',value))
+              return value if ok else 'unrecorded'
+          workflow_version=number('CODEINTENT_WORKFLOW_VERSION')
           workflow_sha=os.environ.get('GITHUB_WORKFLOW_SHA','') or 'unrecorded'
           components=[]
           stored=(doc.get('codeintent_versions') or {}).get('components') or []
@@ -742,13 +770,14 @@ jobs:
               run=os.environ.get('GITHUB_RUN_ID','') or 'unrecorded'
               attempt=os.environ.get('GITHUB_RUN_ATTEMPT','')
               components.append({'id':'workflow','name':'PR workflow',
-                                 'version':'codeintent-checks.yml@'+workflow_sha[:12],
+                                 'version':workflow_version,
                                  'detail':{'file':'codeintent-checks.yml','ref':os.environ.get('GITHUB_WORKFLOW_REF','') or 'unrecorded',
                                            'sha':workflow_sha,'run':run+'/'+attempt if attempt and run!='unrecorded' else run}})
           page=os.environ.get('PAGE_UI_COMMIT','') or 'unrecorded'
-          components.append({'id':'page','name':'Review page','version':page if page=='unrecorded' else page[:12]+('-dirty' if page.endswith('-dirty') else ''),
+          components.append({'id':'page','name':'Review page','version':number('PAGE_UI_VERSION',commit=True),
                              'detail':{'ui_commit':page}})
-          components.append({'id':'renderer','name':'Message renderer','version':'workflow codeintent-checks.yml@'+workflow_sha[:12],'detail':{}})
+          components.append({'id':'renderer','name':'Message renderer','version':workflow_version,
+                             'detail':{'by':'codeintent-checks.yml','sha':workflow_sha}})
           print(render_run_comment(doc, os.environ['DASHBOARD_URL'], components), end='')
           PY
               # The version chain beside the report link (review_service/VERSIONS.md).
