@@ -84,18 +84,27 @@ jobs:
                   return None
               return chain if isinstance(chain, dict) and isinstance(chain.get('components'), list) else None
 
-          def versions_lines(chain):
+          MESSAGE_LIMIT = 65536   # GitHub's comment size: the "Produced by" section must never push a message past it
+
+          def versions_marker(chain):
+              data = json.dumps(chain, separators=(',', ':'), sort_keys=True, default=str).encode('utf-8')
+              return '<!-- codeintent-versions:v1 ' + base64.urlsafe_b64encode(data).decode('ascii').rstrip('=') + ' -->'
+
+          def versions_lines(chain, room=None):
               entries = [c for c in (chain or {}).get('components') or [] if isinstance(c, dict)]
               if not entries:
                   return []
-              data = json.dumps({**chain, 'components': entries}, separators=(',', ':'), sort_keys=True, default=str).encode('utf-8')
               table = [f"| {inline(c.get('name') or c.get('id'))} | {inline(c.get('version'))} |" for c in entries]
-              return ['<details>', VERSIONS_SUMMARY, '', '| Component | Version |', '|---|---|', *table, '', '</details>',
-                      '<!-- codeintent-versions:v1 ' + base64.urlsafe_b64encode(data).decode('ascii').rstrip('=') + ' -->']
+              lines = ['<details>', VERSIONS_SUMMARY, '', '| Component | Version |', '|---|---|', *table, '', '</details>',
+                       versions_marker({**chain, 'components': entries})]
+              if room is None or len('\n'.join(lines)) < room:
+                  return lines
+              marker = versions_marker({**chain, 'components': [{k: c.get(k) for k in ('id', 'name', 'version')} for c in entries]})
+              return [marker] if len(marker) < room else []
 
           def replace_versions_block(body, chain):
-              block = '\n'.join(versions_lines(chain))
               rest = VERSIONS_BLOCK.sub('', body or '')
+              block = '\n'.join(versions_lines(chain, MESSAGE_LIMIT - len(rest) - 3))
               if not block:
                   return rest
               return rest + ('' if not rest or rest.endswith('\n\n') else '\n' if rest.endswith('\n') else '\n\n') + block + '\n'
@@ -137,10 +146,13 @@ jobs:
                           and '<!-- codeintent-checks -->' in c.get('body', '')), None)
               comment_body = result['comment_body']
               if bot and not VERSIONS_MARKER.search(comment_body):
-                  # Carry the existing "Produced by" chain over and record this workflow as its updater.
+                  # Carry the analysis chain over. The entries that described the previous rendering do not describe this
+                  # text: the decisions API rendered it and records no version, and this workflow posted it.
                   chain = parse_versions_marker(bot.get('body', '')) or {'schema': 'codeintent-versions-v1', 'components': []}
                   sha12 = (env.get('GITHUB_WORKFLOW_SHA') or 'unrecorded')[:12]
-                  chain['components'] = [c for c in chain['components'] if isinstance(c, dict) and c.get('id') != 'updater'] + [
+                  chain['components'] = [c for c in chain['components'] if isinstance(c, dict)
+                                         and c.get('id') not in {'renderer', 'page', 'status-service', 'updater'}] + [
+                      {'id': 'renderer', 'name': 'Message renderer', 'version': 'decisions API (unrecorded)'},
                       {'id': 'updater', 'name': 'Updated by', 'version': 'codeintent-violations.yml@' + sha12}]
                   comment_body = replace_versions_block(comment_body, chain)
               if not bot or gh('--method', 'PATCH', f'repos/{repo}/issues/comments/{bot["id"]}',

@@ -564,6 +564,7 @@ jobs:
           
           
           VERSIONS_SCHEMA = 'codeintent-versions-v1'
+          MESSAGE_LIMIT = 65536   # GitHub's comment size: the "Produced by" section must never push a message past it
           VERSIONS_SUMMARY = '<summary>Produced by</summary>'
           VERSIONS_MARKER = re.compile(r'<!-- codeintent-versions:v1 ([A-Za-z0-9_-]*) -->')
           VERSIONS_BLOCK = re.compile(r'(?:<details>\n' + re.escape(VERSIONS_SUMMARY) + r'\n.*?\n</details>\n)?'
@@ -595,20 +596,28 @@ jobs:
               return chain if isinstance(chain,dict) and isinstance(chain.get('components'),list) else None
           
           
-          def versions_lines(chain):
-              """A collapsed "Produced by" table, then the hidden marker; nothing without a chain."""
+          def versions_lines(chain, room=None):
+              """A collapsed "Produced by" table, then the hidden marker; nothing without a chain.
+          
+              With `room` (characters left in the message), a section that does not fit shrinks to the marker alone, without
+              each component's detail, and is left out when even that does not fit.
+              """
               entries=[c for c in (chain or {}).get('components') or [] if isinstance(c,dict)]
               if not entries:
                   return []
               table=[f"| {inline(c.get('name') or c.get('id'))} | {inline(c.get('version'))} |" for c in entries]
-              return ['<details>', VERSIONS_SUMMARY, '', '| Component | Version |', '|---|---|', *table, '', '</details>',
-                      versions_marker({**chain, 'components': entries})]
+              lines=['<details>', VERSIONS_SUMMARY, '', '| Component | Version |', '|---|---|', *table, '', '</details>',
+                     versions_marker({**chain, 'components': entries})]
+              if room is None or len('\n'.join(lines))<room:
+                  return lines
+              marker=versions_marker({**chain, 'components': [{k: c.get(k) for k in ('id','name','version')} for c in entries]})
+              return [marker] if len(marker)<room else []
           
           
           def replace_versions_block(body, chain):
               """Swap the message's "Produced by" section for this chain, or append it; exactly one marker remains."""
-              block='\n'.join(versions_lines(chain))
               rest=VERSIONS_BLOCK.sub('',body or '')
+              block='\n'.join(versions_lines(chain, MESSAGE_LIMIT-len(rest)-3))
               if not block:
                   return rest
               return rest+('' if not rest or rest.endswith('\n\n') else '\n' if rest.endswith('\n') else '\n\n')+block+'\n'
@@ -714,7 +723,8 @@ jobs:
               risks=(acceptance.get('intent_risks') or {}).get('assessments',[])
               if risks:
                   rows+=['',f"🟡 Intent outside governed objectives: {len(risks)} change(s); {len(acceptance.get('required_reviews',[]))} awaiting risk review."]
-              versions=versions_lines(versions_chain(document.get('codeintent_versions'),components))
+              versions=versions_lines(versions_chain(document.get('codeintent_versions'),components),
+                                      MESSAGE_LIMIT-len('\n'.join(rows))-3)
               if versions:
                   rows+=([''] if rows[-1] else [])+versions
               return '\n'.join(rows)+'\n'
