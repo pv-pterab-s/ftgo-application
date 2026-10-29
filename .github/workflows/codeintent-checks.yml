@@ -85,6 +85,20 @@ jobs:
                  "PR_HEAD_REF=\(.head.ref)", "PR_NUMBER=\(.number)"' /tmp/pull-request.json >> "$GITHUB_ENV"
           { echo 'PR_TITLE<<CODEINTENT_TITLE_EOF'; jq -r .title /tmp/pull-request.json; echo 'CODEINTENT_TITLE_EOF'; } >> "$GITHUB_ENV"
 
+      # The published review page's own version (assets/release.json, review_service/VERSIONS.md).
+      # A page without the record, or an unreachable one, is "unrecorded", never a guess.
+      - name: Read the review page version
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          release=$(curl -fsS --max-time 15 "${STATUS_PAGE_URL%/}/assets/release.json" || true)
+          commit=$(jq -r 'if type == "object" and (.ui_commit | type) == "string" then .ui_commit + (if .ui_dirty == "true" then "-dirty" else "" end) else empty end' <<<"$release" 2>/dev/null || true)
+          if ! [[ "$commit" =~ ^[0-9a-f]{7,64}(-dirty)?$ ]]; then
+            commit=unrecorded
+          fi
+          echo "Review page version: $commit"
+          echo "PAGE_UI_COMMIT=$commit" >> "$GITHUB_ENV"
+
       - name: Publish analysis progress
         continue-on-error: true
         run: |
@@ -102,6 +116,34 @@ jobs:
           ## <img src=\"${STATUS_PAGE_URL%/}/assets/checks-running.gif\" width=\"28\" height=\"28\" alt=\"Checks running\"> Analysis in progress
 
           Review links will appear when analysis finishes."
+          # What is known before the analysis records its versions: this workflow and the page.
+          # Same format as governance_comment.placeholder_versions (review_service/VERSIONS.md).
+          versions=$(python3 - <<'PY' || true
+          import base64, json, os
+          def inline(value):
+              return str(value or '').replace('\n',' ').replace('|','\\|').replace('<','&lt;').replace('>','&gt;')[:300]
+          sha=os.environ.get('GITHUB_WORKFLOW_SHA','') or 'unrecorded'
+          run=os.environ.get('GITHUB_RUN_ID','') or 'unrecorded'
+          attempt=os.environ.get('GITHUB_RUN_ATTEMPT','')
+          page=os.environ.get('PAGE_UI_COMMIT','') or 'unrecorded'
+          components=[{'id':'workflow','name':'PR workflow','version':'codeintent-checks.yml@'+sha[:12],
+                       'detail':{'file':'codeintent-checks.yml','ref':os.environ.get('GITHUB_WORKFLOW_REF','') or 'unrecorded',
+                                 'sha':sha,'run':run+'/'+attempt if attempt and run!='unrecorded' else run}},
+                      {'id':'page','name':'Review page','version':page if page=='unrecorded' else page[:12]+('-dirty' if page.endswith('-dirty') else ''),
+                       'detail':{'ui_commit':page}}]
+          chain={'schema':'codeintent-versions-v1','components':components}
+          data=json.dumps(chain,separators=(',',':'),sort_keys=True,default=str).encode('utf-8')
+          print('\n'.join(['<details>','<summary>Produced by</summary>','','| Component | Version |','|---|---|',
+                           *[f"| {inline(c.get('name') or c.get('id'))} | {inline(c.get('version'))} |" for c in components],
+                           '','</details>',
+                           '<!-- codeintent-versions:v1 '+base64.urlsafe_b64encode(data).decode('ascii').rstrip('=')+' -->']))
+          PY
+          )
+          if [ -n "$versions" ]; then
+            body="$body
+
+          $versions"
+          fi
           comment_id=$(gh api "repos/$PR_FULL_REPO/issues/$PR_NUMBER/comments" --paginate --jq ".[] | select(.user.login == \"$CODEINTENT_BOT_LOGIN\" and (.body | contains(\"$marker\"))) | .id" | head -1 || true)
           if [ -n "$comment_id" ]; then
             gh api --method PATCH "repos/$PR_FULL_REPO/issues/comments/$comment_id" -f body="$body" >/dev/null || \
@@ -275,6 +317,14 @@ jobs:
               "pull_request_number": int(os.environ["PR_NUMBER"]),
               "pull_request_title": os.environ["PR_TITLE"],
               **standards_input,
+              # Which workflow run asked; the backend records it as the first version component.
+              "codeintent_workflow": {
+                  "file": "codeintent-checks.yml",
+                  "ref": os.environ.get("GITHUB_WORKFLOW_REF", ""),
+                  "sha": os.environ.get("GITHUB_WORKFLOW_SHA", ""),
+                  "run_id": os.environ.get("GITHUB_RUN_ID", ""),
+                  "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", ""),
+              },
           }
           import hashlib
           payload['fallback_diff_ref'] = {
@@ -417,7 +467,10 @@ jobs:
               export CODEINTENT_COMMENT_ID="$comment_id"
               python3 <<'PY' > /tmp/codeintent-comment.md
           """One compact GitHub comment over native results and separate acceptance policy."""
+          import base64
+          import json
           import os
+          import re
           from html import escape
           from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
           
@@ -510,7 +563,64 @@ jobs:
                       and 'required evidence gap(s)' in check.get('detail', ''))
           
           
-          def render_run_comment(document, report_url):
+          VERSIONS_SCHEMA = 'codeintent-versions-v1'
+          VERSIONS_SUMMARY = '<summary>Produced by</summary>'
+          VERSIONS_MARKER = re.compile(r'<!-- codeintent-versions:v1 ([A-Za-z0-9_-]*) -->')
+          VERSIONS_BLOCK = re.compile(r'(?:<details>\n' + re.escape(VERSIONS_SUMMARY) + r'\n.*?\n</details>\n)?'
+                                      + VERSIONS_MARKER.pattern + r'\n?', re.S)
+          
+          
+          def versions_chain(record=None, components=None):
+              """The stored record's components, then the ones added when the message is rendered (VERSIONS.md)."""
+              stored=record.get('components') if isinstance(record,dict) else None
+              entries=[c for c in [*(stored or []), *(components or [])] if isinstance(c,dict)]
+              return {'schema':VERSIONS_SCHEMA,'components':entries} if entries else None
+          
+          
+          def versions_marker(chain):
+              """The hidden machine-readable line; base64url keeps `--` out of the HTML comment."""
+              data=json.dumps(chain,separators=(',',':'),sort_keys=True,default=str).encode('utf-8')
+              return '<!-- codeintent-versions:v1 '+base64.urlsafe_b64encode(data).decode('ascii').rstrip('=')+' -->'
+          
+          
+          def parse_versions_marker(body):
+              match=VERSIONS_MARKER.search(body or '')
+              if not match:
+                  return None
+              try:
+                  data=match.group(1)
+                  chain=json.loads(base64.urlsafe_b64decode(data+'='*(-len(data)%4)).decode('utf-8'))
+              except ValueError:
+                  return None
+              return chain if isinstance(chain,dict) and isinstance(chain.get('components'),list) else None
+          
+          
+          def versions_lines(chain):
+              """A collapsed "Produced by" table, then the hidden marker; nothing without a chain."""
+              entries=[c for c in (chain or {}).get('components') or [] if isinstance(c,dict)]
+              if not entries:
+                  return []
+              table=[f"| {inline(c.get('name') or c.get('id'))} | {inline(c.get('version'))} |" for c in entries]
+              return ['<details>', VERSIONS_SUMMARY, '', '| Component | Version |', '|---|---|', *table, '', '</details>',
+                      versions_marker({**chain, 'components': entries})]
+          
+          
+          def replace_versions_block(body, chain):
+              """Swap the message's "Produced by" section for this chain, or append it; exactly one marker remains."""
+              block='\n'.join(versions_lines(chain))
+              rest=VERSIONS_BLOCK.sub('',body or '')
+              if not block:
+                  return rest
+              return rest+('' if not rest or rest.endswith('\n\n') else '\n' if rest.endswith('\n') else '\n\n')+block+'\n'
+          
+          
+          def placeholder_versions(components):
+              """The "Produced by" section for a message posted before the analysis has recorded its versions."""
+              lines=versions_lines(versions_chain(None,components))
+              return '\n'.join(lines)+'\n' if lines else ''
+          
+          
+          def render_run_comment(document, report_url, components=None):
               if urlsplit(report_url).scheme not in {'http','https'}:
                   raise ValueError('Report URL must be HTTP(S)')
               comment_id=str(document.get('github_comment_id') or '')
@@ -604,13 +714,40 @@ jobs:
               risks=(acceptance.get('intent_risks') or {}).get('assessments',[])
               if risks:
                   rows+=['',f"🟡 Intent outside governed objectives: {len(risks)} change(s); {len(acceptance.get('required_reviews',[]))} awaiting risk review."]
+              versions=versions_lines(versions_chain(document.get('codeintent_versions'),components))
+              if versions:
+                  rows+=([''] if rows[-1] else [])+versions
               return '\n'.join(rows)+'\n'
 
           import json, os
           with open('/tmp/codeintent-status.json') as stream:
               doc=json.load(stream)
           doc['github_comment_id']=os.environ.get('CODEINTENT_COMMENT_ID','')
-          print(render_run_comment(doc, os.environ['DASHBOARD_URL']), end='')
+          # Read-time components (review_service/VERSIONS.md). The backend copies this run's
+          # codeintent_workflow into the stored record; an older backend has no record, so add it here.
+          workflow_sha=os.environ.get('GITHUB_WORKFLOW_SHA','') or 'unrecorded'
+          components=[]
+          stored=(doc.get('codeintent_versions') or {}).get('components') or []
+          if not any(isinstance(c,dict) and c.get('id')=='workflow' for c in stored):
+              run=os.environ.get('GITHUB_RUN_ID','') or 'unrecorded'
+              attempt=os.environ.get('GITHUB_RUN_ATTEMPT','')
+              components.append({'id':'workflow','name':'PR workflow',
+                                 'version':'codeintent-checks.yml@'+workflow_sha[:12],
+                                 'detail':{'file':'codeintent-checks.yml','ref':os.environ.get('GITHUB_WORKFLOW_REF','') or 'unrecorded',
+                                           'sha':workflow_sha,'run':run+'/'+attempt if attempt and run!='unrecorded' else run}})
+          page=os.environ.get('PAGE_UI_COMMIT','') or 'unrecorded'
+          components.append({'id':'page','name':'Review page','version':page if page=='unrecorded' else page[:12]+('-dirty' if page.endswith('-dirty') else ''),
+                             'detail':{'ui_commit':page}})
+          components.append({'id':'renderer','name':'Message renderer','version':'workflow codeintent-checks.yml@'+workflow_sha[:12],'detail':{}})
+          print(render_run_comment(doc, os.environ['DASHBOARD_URL'], components), end='')
+          PY
+              # The version chain beside the report link (review_service/VERSIONS.md).
+              python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY" || echo "::warning::Could not summarize component versions."
+          import re
+          body=open('/tmp/codeintent-comment.md',encoding='utf-8').read()
+          match=re.search(r'<details>\n<summary>Produced by</summary>\n.*?\n</details>\n', body, re.S)
+          if match:
+              print('\n'+match.group(0))
           PY
               if [ -n "$comment_id" ]; then
                 gh api --method PATCH "repos/$PR_FULL_REPO/issues/comments/$comment_id" -F body=@/tmp/codeintent-comment.md >/dev/null || echo "::warning::Could not update governance comment."

@@ -76,10 +76,16 @@ jobs:
               heading = '### CodeIntent checks -- ' + spinner + ' Updating review…'
               pending = re.sub(r'^### CodeIntent checks[^\n]*', lambda _: heading, bot['body'], count=1, flags=re.MULTILINE)
               if pending == bot['body']:
-                  pending = bot['body'] + '\n\n' + heading
+                  # Keep the "Produced by" section and its one versions marker last.
+                  versions = re.search(r'(?:<details>\n<summary>Produced by</summary>\n.*?\n</details>\n)?<!-- codeintent-versions:v1 ', bot['body'], re.S)
+                  at = versions.start() if versions else len(bot['body'])
+                  pending = bot['body'][:at].rstrip('\n') + '\n\n' + heading + ('\n\n' + bot['body'][at:] if versions else '')
               github(f'/repos/{repo}/issues/comments/{bot["id"]}', 'PATCH', {'body': pending})
           try:
-              query = {'repo': repo, 'sha': sha, 'detail': 'review-comment'}
+              query = {'repo': repo, 'sha': sha, 'detail': 'review-comment',
+                       # Recorded as the "updater" version component (review_service/VERSIONS.md).
+                       'workflow_ref': os.environ.get('GITHUB_WORKFLOW_REF', ''),
+                       'workflow_sha': os.environ.get('GITHUB_WORKFLOW_SHA', '')}
               if bot:
                   query['comment'] = str(bot['id'])
               url = status_url + '?' + urlencode(query)
@@ -90,6 +96,9 @@ jobs:
               body = document['body']
               if '<!-- codeintent-checks -->' not in body:
                   raise SystemExit('Missing authenticated review projection')
+              markers = sum(line.startswith('<!-- codeintent-versions:v1 ') for line in body.splitlines())
+              if markers != 1:
+                  print(f'::warning::The review message carries {markers} component-version markers; expected exactly one.')
               if bot:
                   github(f'/repos/{repo}/issues/comments/{bot["id"]}', 'PATCH', {'body': body})
               else:

@@ -62,6 +62,44 @@ jobs:
               raise SystemExit('Configure CODEINTENT_DECISIONS_URL for this private installation.')
           repo, number, actor = env['REPOSITORY'], env['PR_NUMBER'], env['ACTOR']
 
+          # The bot message's "Produced by" section, as in governance_comment.py (review_service/VERSIONS.md).
+          # Only that section and its one marker are replaced; `codeintent-review:` handles are never touched.
+          import base64, re
+          VERSIONS_SUMMARY = '<summary>Produced by</summary>'
+          VERSIONS_MARKER = re.compile(r'<!-- codeintent-versions:v1 ([A-Za-z0-9_-]*) -->')
+          VERSIONS_BLOCK = re.compile(r'(?:<details>\n' + re.escape(VERSIONS_SUMMARY) + r'\n.*?\n</details>\n)?'
+                                      + VERSIONS_MARKER.pattern + r'\n?', re.S)
+
+          def inline(value):
+              return str(value or '').replace('\n',' ').replace('|','\\|').replace('<','&lt;').replace('>','&gt;')[:300]
+
+          def parse_versions_marker(body):
+              match = VERSIONS_MARKER.search(body or '')
+              if not match:
+                  return None
+              try:
+                  data = match.group(1)
+                  chain = json.loads(base64.urlsafe_b64decode(data + '=' * (-len(data) % 4)).decode('utf-8'))
+              except ValueError:
+                  return None
+              return chain if isinstance(chain, dict) and isinstance(chain.get('components'), list) else None
+
+          def versions_lines(chain):
+              entries = [c for c in (chain or {}).get('components') or [] if isinstance(c, dict)]
+              if not entries:
+                  return []
+              data = json.dumps({**chain, 'components': entries}, separators=(',', ':'), sort_keys=True, default=str).encode('utf-8')
+              table = [f"| {inline(c.get('name') or c.get('id'))} | {inline(c.get('version'))} |" for c in entries]
+              return ['<details>', VERSIONS_SUMMARY, '', '| Component | Version |', '|---|---|', *table, '', '</details>',
+                      '<!-- codeintent-versions:v1 ' + base64.urlsafe_b64encode(data).decode('ascii').rstrip('=') + ' -->']
+
+          def replace_versions_block(body, chain):
+              block = '\n'.join(versions_lines(chain))
+              rest = VERSIONS_BLOCK.sub('', body or '')
+              if not block:
+                  return rest
+              return rest + ('' if not rest or rest.endswith('\n\n') else '\n' if rest.endswith('\n') else '\n\n') + block + '\n'
+
           def gh(*args, payload=None):
               run = subprocess.run(['gh', 'api', *args] + (['--input', '-'] if payload is not None else []),
                                    input=json.dumps(payload) if payload is not None else None,
@@ -97,8 +135,16 @@ jobs:
               pages = json.loads(gh('--paginate', '--slurp', f'repos/{repo}/issues/{number}/comments?per_page=100') or '[]')
               bot = next((c for page in pages for c in page if c.get('user', {}).get('login') == env['CODEINTENT_BOT_LOGIN']
                           and '<!-- codeintent-checks -->' in c.get('body', '')), None)
+              comment_body = result['comment_body']
+              if bot and not VERSIONS_MARKER.search(comment_body):
+                  # Carry the existing "Produced by" chain over and record this workflow as its updater.
+                  chain = parse_versions_marker(bot.get('body', '')) or {'schema': 'codeintent-versions-v1', 'components': []}
+                  sha12 = (env.get('GITHUB_WORKFLOW_SHA') or 'unrecorded')[:12]
+                  chain['components'] = [c for c in chain['components'] if isinstance(c, dict) and c.get('id') != 'updater'] + [
+                      {'id': 'updater', 'name': 'Updated by', 'version': 'codeintent-violations.yml@' + sha12}]
+                  comment_body = replace_versions_block(comment_body, chain)
               if not bot or gh('--method', 'PATCH', f'repos/{repo}/issues/comments/{bot["id"]}',
-                               payload={'body': result['comment_body']}) is None:
+                               payload={'body': comment_body}) is None:
                   raise SystemExit('::error::Decision recorded, but the bot comment was not updated. Retry this Actions run.')
           if not result.get('reply'):
               raise SystemExit(0)   # an ordinary comment that only mentions a command
