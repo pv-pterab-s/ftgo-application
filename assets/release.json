@@ -1,7 +1,7 @@
 {
- "backend_image": "962500057659.dkr.ecr.us-east-2.amazonaws.com/common-table-codeintent@sha256:be67745778913d754cbfc4078f2ac11322702b201b5757ae12c46937999de9c1",
+ "backend_image": "962500057659.dkr.ecr.us-east-2.amazonaws.com/common-table-codeintent@sha256:dbe5446ce8c6621a322c40cad0188c49fee468af197e046e90c1d04902cbabe8",
  "schema": "review-ui-release-v1",
  "source_branch": "release/common-table-20261029",
- "ui_commit": "3508abc825c94db8d8f05ca8053179ca5d4857a6",
+ "ui_commit": "073b2d26d51697c6927ce81443a07990445d7767",
  "ui_dirty": "false"
 }
