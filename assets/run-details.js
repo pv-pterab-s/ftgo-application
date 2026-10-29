@@ -225,8 +225,10 @@ function producedByMarkup(status,packet,release,item){
   :[row('Pipeline components','not recorded')];
  const published=release&&!release.local&&!release.unknown;
  // null: still loading; unknown: the release record could not be read; local: no release record exists.
- rows.push(row('Review page',published?String(release.ui_commit||'not recorded').slice(0,12)+(release.ui_dirty==='true'?'-dirty':''):release?.local?'local checkout (unpublished)':release?.unknown?'not recorded':'loading…',
-  published?detailTitle({ui_commit:release.ui_commit,source_branch:release.source_branch,backend_image:release.backend_image}):''));
+ // The page's number (ui_version); a release record staged before numbers existed has none (its commit is in the title).
+ const pageVersion=()=>release.ui_version?String(release.ui_version):'unrecorded';
+ rows.push(row('Review page',published?pageVersion():release?.local?'local checkout (unpublished)':release?.unknown?'not recorded':'loading…',
+  published?detailTitle({ui_commit:release.ui_commit,ui_dirty:release.ui_dirty,source_branch:release.source_branch,backend_image:release.backend_image}):''));
  const standard=item?.findings?.[0]?.kind==='standard'?item.findings[0]:null;
  if(standard){
   rows.push(row('Rule',standard.rule_id),row('Rule version',standard.rule_version));
