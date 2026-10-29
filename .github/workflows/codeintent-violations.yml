@@ -29,7 +29,7 @@ concurrency:
 # codeintent-checks.yml, codeintent-review-sync.yml and codeintent-violations.yml. When any of the three
 # changes, bump it to the next number (v000, v001, ...) in all three files together.
 env:
-  CODEINTENT_WORKFLOW_VERSION: v000
+  CODEINTENT_WORKFLOW_VERSION: v001
 
 jobs:
   decide:
@@ -75,6 +75,7 @@ jobs:
           from urllib.parse import quote, unquote
           VERSIONS_SCHEMA = 'codeintent-versions-v1'
           MESSAGE_LIMIT = 65536   # GitHub's comment size: the versions span must never push a message past it
+          TITLE_LIMIT = 32767     # GitHub drops a longer title attribute when it renders the message
           # The chain is an empty <span> whose title holds one readable line per component (review_service/VERSIONS.md).
           VERSIONS_HEAD = '__VERSION ' + VERSIONS_SCHEMA
           VERSIONS_SPAN = re.compile(r'<span title="' + VERSIONS_HEAD + r'(?P<lines>(?:\r?\n[^"<>&]*)?)"></span>')
@@ -83,7 +84,7 @@ jobs:
           # line's grammar. Everything else (%, comma, =, parentheses, brackets, quotes, <, >, &, backslash, control
           # characters, non-ASCII) is percent-encoded, as is a leading or trailing space and a name's first character
           # unless it is an ASCII letter (so no line can start a Markdown block).
-          VERSIONS_SAFE = " /:@+~._-'*!$;?#{}|^`"
+          VERSIONS_SAFE = " /:@+~._-'*!$;?#{}|`"   # no "^": a line starting "[^" would be a footnote definition
           VERSIONS_LINE = re.compile(r'(?P<name>[^\[]*?) ?\[(?P<id>[^\]]*)\]:(?: (?P<version>[^(]*?))?(?: \((?P<detail>[^()]*)\))?')
           # The earlier format: a collapsed "Produced by" table and a hidden base64url JSON comment. It is still read, and
           # removed whenever a message is updated.
@@ -164,11 +165,14 @@ jobs:
               entries=[c for c in (chain or {}).get('components') or [] if isinstance(c,dict)]
               if not entries:
                   return []
+              def fits(span):
+                  title=len(span)-len('<span title="')-len('"></span>')
+                  return title<=TITLE_LIMIT and (room is None or len(span)<room)
               span=versions_marker({**chain, 'components': entries})
-              if room is None or len(span)<room:
+              if fits(span):
                   return [span]
               span=versions_marker({**chain, 'components': entries}, detail=False)
-              return [span] if len(span)<room else []
+              return [span] if fits(span) else []
 
 
           def remove_versions_blocks(body):

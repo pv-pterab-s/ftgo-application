@@ -23,7 +23,7 @@ concurrency:
 # codeintent-checks.yml, codeintent-review-sync.yml and codeintent-violations.yml. When any of the three
 # changes, bump it to the next number (v000, v001, ...) in all three files together.
 env:
-  CODEINTENT_WORKFLOW_VERSION: v000
+  CODEINTENT_WORKFLOW_VERSION: v001
 
 jobs:
   update:
