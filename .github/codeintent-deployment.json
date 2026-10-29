@@ -5,16 +5,16 @@
   "aws_account": "962500057659",
   "aws_region": "us-east-2",
   "runtime": "standalone review_service",
-  "image": "962500057659.dkr.ecr.us-east-2.amazonaws.com/common-table-codeintent@sha256:dc1fd350490bfb88103be12a30d9a35d4c046af55209505710781f44882ba11f",
+  "image": "962500057659.dkr.ecr.us-east-2.amazonaws.com/common-table-codeintent@sha256:dbe5446ce8c6621a322c40cad0188c49fee468af197e046e90c1d04902cbabe8",
   "baseline_status": "user_supplied_archive_imported_unchanged",
   "baseline_source_commit": "3f7173407cebe227a5f969eeb824dbe4811073ff",
-  "verification": "deployment_and_http_checks_passed",
+  "verification": "deployment_http_and_pr_rerun_checks_passed",
   "image_functions": [
     "common-table-codeintent-review",
     "common-table-codeintent-review-status"
   ],
   "pinned_image": "962500057659.dkr.ecr.us-east-2.amazonaws.com/common-table-codeintent@sha256:ca4b00ba3094f120545721f04946b96bb735c0aa2265ece62d03fb79a136a15d",
-  "codeintent_source_branch": "maintenance/main-20261028",
-  "codeintent_source_commit": "ae664157df27b85ee4db19251cd76d6bcafccdb4",
-  "deployed_at": "2026-10-28"
+  "codeintent_source_branch": "release/common-table-20261029",
+  "codeintent_source_commit": "073b2d26d51697c6927ce81443a07990445d7767",
+  "deployed_at": "2026-10-29"
 }
