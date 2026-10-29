@@ -83,8 +83,9 @@ jobs:
               heading = '### CodeIntent checks -- ' + spinner + ' Updating review…'
               pending = re.sub(r'^### CodeIntent checks[^\n]*', lambda _: heading, bot['body'], count=1, flags=re.MULTILINE)
               if pending == bot['body']:
-                  # Keep the "Produced by" section and its one versions marker last.
-                  versions = re.search(r'(?:<details>\n<summary>Produced by</summary>\n.*?\n</details>\n)?<!-- codeintent-versions:v1 ', bot['body'], re.S)
+                  # Keep the versions span (or an older message's "Produced by" table and marker) last.
+                  versions = re.search(r'<span title="__VERSION codeintent-versions-v1[\r\n"]|<details>\r?\n<summary>Produced by</summary>\r?\n'
+                                       r'|<!-- codeintent-versions:v1 ', bot['body'])
                   at = versions.start() if versions else len(bot['body'])
                   pending = bot['body'][:at].rstrip('\n') + '\n\n' + heading + ('\n\n' + bot['body'][at:] if versions else '')
               github(f'/repos/{repo}/issues/comments/{bot["id"]}', 'PATCH', {'body': pending})
@@ -104,9 +105,10 @@ jobs:
               body = document['body']
               if '<!-- codeintent-checks -->' not in body:
                   raise SystemExit('Missing authenticated review projection')
-              markers = sum(line.startswith('<!-- codeintent-versions:v1 ') for line in body.splitlines())
-              if markers != 1:
-                  print(f'::warning::The review message carries {markers} component-version markers; expected exactly one.')
+              # Exactly one versions span (review_service/VERSIONS.md), and none of the older format.
+              markers = len(re.findall(r'<span title="__VERSION codeintent-versions-v1[\r\n"]', body))
+              if markers != 1 or '<!-- codeintent-versions:v1 ' in body:
+                  print(f'::warning::The review message carries {markers} component-version spans; expected exactly one __VERSION span.')
               if bot:
                   github(f'/repos/{repo}/issues/comments/{bot["id"]}', 'PATCH', {'body': body})
               else:

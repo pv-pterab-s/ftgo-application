@@ -68,52 +68,121 @@ jobs:
               raise SystemExit('Configure CODEINTENT_DECISIONS_URL for this private installation.')
           repo, number, actor = env['REPOSITORY'], env['PR_NUMBER'], env['ACTOR']
 
-          # The bot message's "Produced by" section, as in governance_comment.py (review_service/VERSIONS.md).
-          # Only that section and its one marker are replaced; `codeintent-review:` handles are never touched.
+          # The bot message's versions span, copied from governance_comment.py (review_service/VERSIONS.md), including
+          # the removal of the older "Produced by" table and marker. Only the span is replaced; `codeintent-review:`
+          # handles are never touched.
           import base64, re
-          VERSIONS_SUMMARY = '<summary>Produced by</summary>'
-          VERSIONS_MARKER = re.compile(r'<!-- codeintent-versions:v1 ([A-Za-z0-9_-]*) -->')
-          VERSIONS_BLOCK = re.compile(r'(?:<details>\n' + re.escape(VERSIONS_SUMMARY) + r'\n.*?\n</details>\n)?'
-                                      + VERSIONS_MARKER.pattern + r'\n?', re.S)
+          from urllib.parse import quote, unquote
+          VERSIONS_SCHEMA = 'codeintent-versions-v1'
+          MESSAGE_LIMIT = 65536   # GitHub's comment size: the versions span must never push a message past it
+          # The chain is an empty <span> whose title holds one readable line per component (review_service/VERSIONS.md).
+          VERSIONS_HEAD = '__VERSION ' + VERSIONS_SCHEMA
+          VERSIONS_SPAN = re.compile(r'<span title="' + VERSIONS_HEAD + r'(?P<lines>(?:\r?\n[^"<>&]*)?)"></span>')
+          VERSIONS_SPAN_BLOCK = re.compile(VERSIONS_SPAN.pattern + r'[ \t]*(?:\r?\n)?')
+          # Characters left readable in a value: none of them is special inside a double-quoted HTML attribute or in a
+          # line's grammar. Everything else (%, comma, =, parentheses, brackets, quotes, <, >, &, backslash, control
+          # characters, non-ASCII) is percent-encoded, as is a leading or trailing space and a name's first character
+          # unless it is an ASCII letter (so no line can start a Markdown block).
+          VERSIONS_SAFE = " /:@+~._-'*!$;?#{}|^`"
+          VERSIONS_LINE = re.compile(r'(?P<name>[^\[]*?) ?\[(?P<id>[^\]]*)\]:(?: (?P<version>[^(]*?))?(?: \((?P<detail>[^()]*)\))?')
+          # The earlier format: a collapsed "Produced by" table and a hidden base64url JSON comment. It is still read, and
+          # removed whenever a message is updated.
+          OLD_VERSIONS_MARKER = re.compile(r'<!-- codeintent-versions:v1 ([A-Za-z0-9_-]*) -->')
+          OLD_VERSIONS_BLOCK = re.compile(r'<details>\r?\n<summary>Produced by</summary>\r?\n.*?\r?\n</details>\r?\n?'
+                                          r'(?:' + OLD_VERSIONS_MARKER.pattern + r'[ \t]*(?:\r?\n)?)?|'
+                                          + OLD_VERSIONS_MARKER.pattern + r'[ \t]*(?:\r?\n)?', re.S)
 
-          def inline(value):
-              return str(value or '').replace('\n',' ').replace('|','\\|').replace('<','&lt;').replace('>','&gt;')[:300]
+
+          def versions_quote(value, first=False):
+              """Percent-encode one value so the line round-trips through unquote and stays inert in the attribute."""
+              text=quote('' if value is None else str(value), safe=VERSIONS_SAFE)
+              if text[:1]==' ' or (first and text[:1] and text[0]!='%' and not ('a'<=text[0].lower()<='z')):
+                  text='%{:02X}'.format(ord(text[0]))+text[1:]
+              if text[-1:]==' ':
+                  text=text[:-1]+'%20'
+              return text
+
+
+          def versions_line(component, detail=True):
+              """`<name> [<id>]: <version>`, then ` (k=v, ...)` when the component has detail."""
+              line=(versions_quote(component.get('name'), first=True)+' ['+versions_quote(component.get('id'))+']: '
+                    +versions_quote(component.get('version')))
+              pairs=component.get('detail') if detail and isinstance(component.get('detail'),dict) else {}
+              if pairs:
+                  line+=' ('+', '.join(versions_quote(k)+'='+versions_quote(v) for k,v in pairs.items())+')'
+              return line
+
+
+          def versions_marker(chain, detail=True):
+              """The versions span: empty, so nothing shows on the page; its title carries the chain, one line per component."""
+              entries=[c for c in (chain or {}).get('components') or [] if isinstance(c,dict)]
+              return '<span title="'+'\n'.join([VERSIONS_HEAD,*(versions_line(c,detail) for c in entries),''])+'"></span>'
+
+
+          def parse_versions_span(text):
+              """The chain from a span's lines; every component comes back with a `detail` dict (empty when none was shown)."""
+              components=[]
+              for line in re.split(r'\r?\n',text):
+                  if not line.strip():
+                      continue
+                  match=VERSIONS_LINE.fullmatch(line.strip())
+                  if not match:
+                      return None
+                  detail={}
+                  for pair in match['detail'].split(',') if match['detail'] is not None else []:
+                      key,equals,value=pair[1:].partition('=') if pair.startswith(' ') else pair.partition('=')
+                      if not equals:
+                          return None
+                      detail[unquote(key)]=unquote(value)
+                  components.append({'id':unquote(match['id']),'name':unquote(match['name']),
+                                     'version':unquote(match['version'] or ''),'detail':detail})
+              return {'schema':VERSIONS_SCHEMA,'components':components}
+
 
           def parse_versions_marker(body):
-              match = VERSIONS_MARKER.search(body or '')
+              """The chain from the message's versions span, or from the earlier hidden marker when there is no span."""
+              match=VERSIONS_SPAN.search(body or '')
+              if match:
+                  return parse_versions_span(match['lines'])
+              match=OLD_VERSIONS_MARKER.search(body or '')
               if not match:
                   return None
               try:
-                  data = match.group(1)
-                  chain = json.loads(base64.urlsafe_b64decode(data + '=' * (-len(data) % 4)).decode('utf-8'))
+                  data=match.group(1)
+                  chain=json.loads(base64.urlsafe_b64decode(data+'='*(-len(data)%4)).decode('utf-8'))
               except ValueError:
                   return None
-              return chain if isinstance(chain, dict) and isinstance(chain.get('components'), list) else None
+              return chain if isinstance(chain,dict) and isinstance(chain.get('components'),list) else None
 
-          MESSAGE_LIMIT = 65536   # GitHub's comment size: the "Produced by" section must never push a message past it
-
-          def versions_marker(chain):
-              data = json.dumps(chain, separators=(',', ':'), sort_keys=True, default=str).encode('utf-8')
-              return '<!-- codeintent-versions:v1 ' + base64.urlsafe_b64encode(data).decode('ascii').rstrip('=') + ' -->'
 
           def versions_lines(chain, room=None):
-              entries = [c for c in (chain or {}).get('components') or [] if isinstance(c, dict)]
+              """The versions span as the message's last block; nothing without a chain.
+
+              With `room` (characters left in the message), a span that does not fit drops each component's detail, and is
+              left out when even that does not fit.
+              """
+              entries=[c for c in (chain or {}).get('components') or [] if isinstance(c,dict)]
               if not entries:
                   return []
-              table = [f"| {inline(c.get('name') or c.get('id'))} | {inline(c.get('version'))} |" for c in entries]
-              lines = ['<details>', VERSIONS_SUMMARY, '', '| Component | Version |', '|---|---|', *table, '', '</details>',
-                       versions_marker({**chain, 'components': entries})]
-              if room is None or len('\n'.join(lines)) < room:
-                  return lines
-              marker = versions_marker({**chain, 'components': [{k: c.get(k) for k in ('id', 'name', 'version')} for c in entries]})
-              return [marker] if len(marker) < room else []
+              span=versions_marker({**chain, 'components': entries})
+              if room is None or len(span)<room:
+                  return [span]
+              span=versions_marker({**chain, 'components': entries}, detail=False)
+              return [span] if len(span)<room else []
+
+
+          def remove_versions_blocks(body):
+              """The message without any versions span, "Produced by" table or earlier hidden marker."""
+              return OLD_VERSIONS_BLOCK.sub('',VERSIONS_SPAN_BLOCK.sub('',body or ''))
+
 
           def replace_versions_block(body, chain):
-              rest = VERSIONS_BLOCK.sub('', body or '')
-              block = '\n'.join(versions_lines(chain, MESSAGE_LIMIT - len(rest) - 3))
+              """Swap the message's versions for this chain, or append them; exactly one span remains, last."""
+              rest=remove_versions_blocks(body)
+              block='\n'.join(versions_lines(chain, MESSAGE_LIMIT-len(rest)-3))
               if not block:
                   return rest
-              return rest + ('' if not rest or rest.endswith('\n\n') else '\n' if rest.endswith('\n') else '\n\n') + block + '\n'
+              return rest+('' if not rest or rest.endswith('\n\n') else '\n' if rest.endswith('\n') else '\n\n')+block+'\n'
 
           def gh(*args, payload=None):
               run = subprocess.run(['gh', 'api', *args] + (['--input', '-'] if payload is not None else []),
@@ -151,7 +220,10 @@ jobs:
               bot = next((c for page in pages for c in page if c.get('user', {}).get('login') == env['CODEINTENT_BOT_LOGIN']
                           and '<!-- codeintent-checks -->' in c.get('body', '')), None)
               comment_body = result['comment_body']
-              if bot and not VERSIONS_MARKER.search(comment_body):
+              if not VERSIONS_SPAN.search(comment_body) and OLD_VERSIONS_MARKER.search(comment_body):
+                  # Rendered by an older renderer: the same chain, as the versions span.
+                  comment_body = replace_versions_block(comment_body, parse_versions_marker(comment_body))
+              elif bot and not VERSIONS_SPAN.search(comment_body):
                   # Carry the analysis chain over. The entries that described the previous rendering do not describe this
                   # text: the decisions API rendered it and records no version, and this workflow posted it.
                   chain = parse_versions_marker(bot.get('body', '')) or {'schema': 'codeintent-versions-v1', 'components': []}
