@@ -214,7 +214,33 @@ function findingGapsMarkup(item,packet){
  return `<section class="finding-gaps" aria-label="Analysis limits for this finding"><h4>Analysis limits for this finding</h4><ul>${notes.map(note=>`<li class="${escapeHtml(note.kind)}">${escapeHtml(note.text)}</li>`).join('')}</ul><p>These mark evidence the analysis did not follow or a route it traced. They are not defects. Check them before relying on this finding.</p></section>`;
 }
 
-const api={runDetails,runDetailsMarkup,checkCoverage,findingGaps,findingGapsMarkup,itemFlows,ownerName};
+// The component versions that produced this run (review_service/VERSIONS.md), this page's own release, and
+// the item's own rule. Values come only from the record; a missing one says "not recorded", never a guess.
+function producedByMarkup(status,packet,release,item){
+ const record=[status?.codeintent_versions,packet?.codeintent_versions].find(value=>value&&Array.isArray(value.components));
+ const detailTitle=detail=>detail&&typeof detail==='object'?Object.entries(detail).map(([key,value])=>`${key}: ${value}`).join('\n'):'';
+ const row=(name,version,title)=>`<dt>${escapeHtml(name)}</dt><dd${title?` title="${escapeHtml(title)}"`:''}>${escapeHtml(version||'not recorded')}</dd>`;
+ const rows=record?record.components.filter(part=>part&&typeof part==='object'&&part.id!=='page')
+   .map(part=>row(part.name||part.id,part.version,detailTitle(part.detail)))
+  :[row('Pipeline components','not recorded')];
+ const published=release&&!release.local&&!release.unknown;
+ // null: still loading; unknown: the release record could not be read; local: no release record exists.
+ rows.push(row('Review page',published?String(release.ui_commit||'not recorded').slice(0,12)+(release.ui_dirty==='true'?'-dirty':''):release?.local?'local checkout (unpublished)':release?.unknown?'not recorded':'loading…',
+  published?detailTitle({ui_commit:release.ui_commit,source_branch:release.source_branch,backend_image:release.backend_image}):''));
+ const standard=item?.findings?.[0]?.kind==='standard'?item.findings[0]:null;
+ if(standard){
+  rows.push(row('Rule',standard.rule_id),row('Rule version',standard.rule_version));
+  if(standard.detected_by)rows.push(row('Detected by',standard.detected_by+(standard.static_check?` (${standard.static_check})`:'')));
+ }else if(item?.objective){
+  const baseline=status?.governance_baseline;
+  if(baseline?.governance_version)rows.push(row('Governance version',String(baseline.governance_version).replace(/^gov:/,'').slice(0,12),baseline.governance_version));
+  if(baseline?.authority?.ledger_release)rows.push(row('Ledger release',String(baseline.authority.ledger_release).slice(0,12),baseline.authority.ledger_release));
+  rows.push(row('Objective',item.objectiveId||item.objective_id||item.concept||item.id));
+ }
+ return `<section class="produced-by" aria-label="Produced by"><h4>Produced by</h4><dl>${rows.join('')}</dl></section>`;
+}
+
+const api={runDetails,runDetailsMarkup,checkCoverage,findingGaps,findingGapsMarkup,itemFlows,ownerName,producedByMarkup};
 root.codeIntentRunDetails=api;
 if(typeof module!=='undefined')module.exports=api;
 })(typeof window!=='undefined'?window:globalThis);

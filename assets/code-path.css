@@ -1,0 +1,27 @@
+/* Scoped graph/source navigation; no governance-map styles. */
+.ig-toolbar .ig-objective{font:400 18px/1.5 var(--sans);margin:0;max-width:80ch;color:var(--ink)}
+.ig-objective b{font-weight:700}
+.ig-node.ig-behavior rect{fill:#fff0c8;stroke:#b78312;stroke-width:2}
+.ig-node.ig-behavior text{fill:#33290c}
+.ig-node.ig-behavior.ig-muted{opacity:.8}
+.ig-node.ig-behavior.ig-selected rect{stroke:#2067c7;stroke-width:3}
+.ig-code-path{margin-top:18px;border-top:1px solid var(--line);padding-top:18px}
+.ig-code-path>header,.cp-method-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.ig-code-path>header>span,.cp-boundary-note{font-size:12px;color:var(--muted)}
+.cp-breadcrumbs{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:12px 0}
+.cp-breadcrumbs .cp-crumb{padding:6px 10px;font-size:12px}
+.cp-changed{background:#fff0c8;border:1px solid #d8b54e;color:#574515;border-radius:20px;font-size:11px;padding:3px 8px}
+.ig-code-path .cp-source{background:var(--sunk);padding:12px 0;max-height:420px;overflow:auto;font:12px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre;overflow-wrap:normal}
+.cp-line{display:inline-flex;min-width:100%;padding-right:16px}
+.cp-line-number{display:inline-block;flex:0 0 44px;text-align:right;padding:0 12px 0 8px;color:var(--muted);user-select:none}
+.cp-source .cp-call{font:inherit;line-height:inherit;color:var(--blue,#1764b0);background:#2d73c515;border:0;border-bottom:1px solid #2d73c5;border-radius:2px;padding:0 2px;cursor:pointer}
+.cp-source .cp-call:hover,.cp-source .cp-call:focus{background:#2d73c535;outline:1px solid #2d73c5}
+.cp-boundary{border-bottom:1px dotted var(--muted)}
+.cp-next:disabled{opacity:.6;cursor:default}
+@media(prefers-color-scheme:dark){.ig-node.ig-behavior rect{fill:#4b3a12}.ig-node.ig-behavior text{fill:#ffdfa0}}
+
+/* Source rows provide their own line breaks; pre whitespace must not add blank rows. */
+.cp-source code{display:block;white-space:normal}
+.cp-source .cp-line{display:flex;white-space:pre;min-height:1.7em}
+.cp-source .cp-highlight{background:#ffe3a0;color:inherit;border-radius:2px}
+.ig-edge-caption{font:10px var(--sans);fill:var(--muted);paint-order:stroke;stroke:var(--paper,#fff);stroke-width:4px;stroke-linejoin:round}

@@ -1,0 +1,7 @@
+{
+ "backend_image": "962500057659.dkr.ecr.us-east-2.amazonaws.com/common-table-codeintent@sha256:be67745778913d754cbfc4078f2ac11322702b201b5757ae12c46937999de9c1",
+ "schema": "review-ui-release-v1",
+ "source_branch": "release/common-table-20261029",
+ "ui_commit": "3508abc825c94db8d8f05ca8053179ca5d4857a6",
+ "ui_dirty": "false"
+}

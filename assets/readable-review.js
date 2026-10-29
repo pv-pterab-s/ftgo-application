@@ -168,6 +168,7 @@ function modelFromSemantics(packet,summary){
    method:shortMethod(row.changed_source?.method||flow.method),methodRef:row.changed_source?.method||flow.method||'',file:row.changed_source?.file||flow.source?.file||'',owner:paths.map(path=>path.owner).find(Boolean)||'',objective,
    before:addedFile?`The accepted baseline did not contain ${shortFile(row.changed_source?.file||flow.source?.file)}.`:row.behavior_before,
    after:row.behavior_after,
+   requirementSummary:row.requirement_summary||'',reviewerAction:row.reviewer_action||'',possibleEffects:row.possible_effects||[],semanticComparison:row.semantic_comparison||null,
    summary:row.semantic_consequence,
    detailSummary:[row.semantic_consequence,row.user_or_system_effect].filter(Boolean).join(' '),
    intentBefore:dedupeFacts(related.flatMap(value=>flowFacts(value,'before'))),intentAfter:dedupeFacts(related.flatMap(value=>flowFacts(value,'after'))),
@@ -313,20 +314,48 @@ function standardDetection(finding){
 }
 // A coding-standards finding uses the same review page as an intent change, filled from the rule and the
 // finding: no intent facts, and no wording borrowed from an intent item that touches the same method.
+function standardFocusComparison(packet,file,focus){
+ const comparison=patchComparison(packet,file);
+ if(!comparison||!Number.isInteger(focus?.line)||typeof focus?.text!=='string'||!focus.text)return comparison;
+ const hunks=[];let current,number=null;
+ for(const row of comparison.diffLines){
+  const header=row[1].match(/^@@ -\d+(?:,\d+)? \+(\d+)/);
+  if(header){current={rows:[],matches:0};hunks.push(current);number=Number(header[1]);}
+  if(!current)continue;
+  current.rows.push(row);
+  if(!header&&(row[0]==='+'||row[0]===' ')){
+   if(number===focus.line&&row[1].indexOf(focus.text)>=0)current.matches++;
+   number++;
+  }
+ }
+ const selected=hunks.filter(h=>h.matches===1);
+ if(selected.length!==1)return comparison;
+ const rows=selected[0].rows,side=mark=>rows.filter(r=>!r[1].startsWith('@@')&&(r[0]===mark||r[0]===' ')).map(r=>r[1]).join('\n');
+ return {...comparison,scope:'source-location',diffLines:rows,before:{text:side('-')},after:{text:side('+')},qualification:'Verified patch hunk containing the proposed issue location.'};
+}
 function standardItem(packet,checks,finding,target,interpretation){
  const where=shortMethod(finding.method)||String(finding.file||'').split('/').pop()||'This code';
  const line=finding.line?` (line ${finding.line})`:'';
  const how=standardDetection(finding);
- const summary=interpretation.summary||`${where} does not follow the rule "${String(finding.name||finding.title||'').replace(/\.$/,'')}". ${finding.guidance||''}`.trim();
+ const fallback=finding.watchOnly?`The standards check raised an advisory concern in ${where}. This item does not block the check or establish that this PR introduced a violation.`:
+  finding.detected_by==='static'&&finding.static_check==='ref_eq'?`A static check flagged an identity comparison in ${where}. Separate objects can hold equal values but compare as different.`:
+  `The standards check flagged ${where} against this rule.`;
+ const usable=(!finding.watchOnly||interpretation.presentation_version==='standards-v3')&&interpretation.summary&&!/does not follow the rule/i.test(interpretation.summary);
+ const summary=usable?interpretation.summary:fallback;
  return {id:finding.id,kind:finding.watchOnly?'change':'constraint',status:finding.watchOnly?'watch':'finding',standard:true,
   title:finding.title,concept:'Repository standard',method:finding.method,methodRef:target?.methodRef||finding.method||'',
   file:finding.file,line:finding.line||'',owner:finding.owner||'',objective:'',
   beforeLabel:'THE RULE REQUIRES',afterLabel:'WITH THIS PR',
   before:String(finding.name||finding.title||'This repository standard.').replace(/\.?$/,'.'),
-  after:`${where}${line} does not meet it. Raised by ${how}.`,
-  summary,detailSummary:interpretation.review||summary,resolution:finding.guidance||'',
+  after:finding.watchOnly?`${where}${line} was recorded as an advisory concern.`:`${where}${line} was flagged by ${how}.`,
+  summary,detailSummary:usable?(interpretation.review||summary):summary,resolution:finding.guidance||'',
+  sourceFocus:interpretation.source_focus||null,
+  possibleEffects:interpretation.possible_effects||(finding.detected_by==='static'&&finding.static_check==='ref_eq'?[{
+   title:'Equal values may be treated as different',
+   scenario:'If separate objects contain equal values, comparing their identities can treat those values as different.',
+   customer_effect:'Callers expecting equal values to match could take the wrong branch.',tone:'risk'}]:[]),
   intentBefore:[],intentAfter:[],connections:target?.connections||[],
-  comparison:target?.comparison||scopedPatchComparison(packet,finding.file,finding.method,[])||patchComparison(packet,finding.file),
+  comparison:interpretation.source_focus?standardFocusComparison(packet,finding.file,interpretation.source_focus):(target?.comparison||scopedPatchComparison(packet,finding.file,finding.method,[])||patchComparison(packet,finding.file)),
   findings:[finding],relatedBehaviorId:target?.id||null,reviewType:reviewType(finding),
   check:(checks||[]).find(check=>check.id==='coding_standards')||null,
   groundingLabel:'RULE FINDING · CODING-STANDARDS CHECK',
@@ -335,7 +364,7 @@ function standardItem(packet,checks,finding,target,interpretation){
 
 function reviewFindingItems(packet,summary,items,checks,includeAdvisory=false){
  const interpretations=new Map((summary?.intent_semantics?.finding_explanations||[])
-  .map(row=>[row.finding_id,{summary:row.summary||row.explanation,review:row.review||row.explanation}]));
+  .map(row=>[row.finding_id,{summary:row.summary||row.explanation,review:row.review||row.explanation,presentation_version:row.presentation_version,possible_effects:row.possible_effects,source_focus:row.source_focus}]));
  const projected=[];
  for(const finding of reviewFindings(checks,includeAdvisory)){
   const candidates=items.filter(item=>finding.file&&item.file===finding.file);
@@ -554,13 +583,22 @@ function advisoryDescription(packet,summary,check,finding){
  if(!item)return null;
  return {...item,title:`Informational check: ${shortMethod(finding.unit)||String(finding.file||'').split('/').pop()}`,
   after:`The current run classified this observation in ${finding.unit||finding.file} as informational; no response is required.`,
-  summary:`The checker raised an informational concern about ${finding.category||'this code'}.`,
-  detailSummary:`Review guidance: ${finding.guidance||'Inspect the recorded source below.'}`};
+  summary:item.summary,
+  detailSummary:item.detailSummary};
 }
+function standardsScope(check){
+ if(check?.id!=='coding_standards')return null;
+ const coverage=check.coverage||{},counts=coverage.counts||{};
+ const incomplete=(check.state||check.conclusion)==='error'||['incomplete','partial'].includes(coverage.completeness)||Number(counts.not_judged)>0||Number(counts.source_gaps)>0;
+ if(incomplete)return {title:(check.state||check.conclusion)==='error'?'Standards analysis incomplete':'Coverage note',summary:(check.state||check.conclusion)==='error'?'The standards check could not finish assessing this change. Findings below cover only the code that was analyzed.':'The reported findings are available. Some checks were limited or not evaluated.',details:[Number(counts.source_gaps)>0?`${counts.source_gaps} source gaps recorded`:'',Number(counts.not_judged)>0?`${counts.not_judged} checks were not evaluated`:''].filter(Boolean).join('; ')};
+ if(counts.rules_active!==undefined&&Number(counts.rules_active)===0)return {title:'Model-based standards were not enforced',summary:'This saved run had no active model-based standards. Static checks may still have run; a passing result does not clear the held standards.',details:''};
+ return null;
+}
+root.codeIntentStandardsScope=standardsScope;
 root.codeIntentAdvisoryDescription=advisoryDescription;
 root.codeIntentSourceDiffLines=sourceDiffLines;
 root.codeIntentReviewModel=codeIntentReviewModel;
 root.codeIntentReviewMarkup=codeIntentReviewMarkup;
 root.renderCodeIntentReview=renderCodeIntentReview;
-if(typeof module!=='undefined')module.exports={codeIntentReviewModel,codeIntentReviewMarkup,sourceDiffLines,advisoryDescription};
+if(typeof module!=='undefined')module.exports={standardsScope,codeIntentReviewModel,codeIntentReviewMarkup,sourceDiffLines,advisoryDescription};
 })(typeof window!=='undefined'?window:globalThis);

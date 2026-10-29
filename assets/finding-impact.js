@@ -210,23 +210,24 @@ function findingImpact(item,packet){
  return {status:'mapped',origin,origins:origins.map(node),inferred,declaredFromPatch,callers:rows,truncated:found.length>=MAX_CALLERS};
 }
 
+function possibleEffectsMarkup(item){
+ const effects=(item.possibleEffects||[]).slice(0,3);if(!effects.length)return '';
+ return `<div class="possible-effects">${effects.map(effect=>`<article class="possible-effect"><h5>${escapeHtml(effect.title)}</h5><p class="possible-effect-description">${escapeHtml(effect.scenario)}</p>${effect.customer_effect?`<p class="possible-effect-customer">${escapeHtml(effect.customer_effect)}</p>`:''}</article>`).join('')}</div>`;
+}
 function findingImpactMarkup(item,packet){
- const impact=findingImpact(item,packet);
- const note='<p class="impact-note">Callers come from the baseline’s resolved Java call graph, up to three calls away. Messages and HTTP calls between services are not traced here, so a service missing from this list can still be affected. Traced event routes appear under Cross-service contract.</p>';
- if(impact.status==='unavailable')return '';
- if(impact.status==='ambiguous')return `<section class="finding-impact"><h4>Impact of this change</h4><p>The recorded method signature cannot distinguish this finding’s method from possible overloads, so its callers cannot be identified reliably.</p>${note}</section>`;
- if(impact.status==='unmapped')return `<section class="finding-impact"><h4>Impact of this change</h4><p>This finding’s method is new in this PR or is not in the baseline call graph, so it has no recorded callers.</p>${note}</section>`;
+ const impact=findingImpact(item,packet),possibilities=possibleEffectsMarkup(item);
+ if(impact.status!=='mapped')return possibilities?`<section class="finding-impact"><h4>Possible impact of this change based on analysis of code intent</h4>${possibilities}</section>`:'';
  const button=row=>`<button type="button" class="impact-method" data-impact-method="${escapeHtml(row.id)}" title="${escapeHtml(row.file)}">${escapeHtml(row.name)}</button>`;
  const line=row=>`<li class="${row.demonstrated?'demonstrated':'potential'}">${button(row)}<span class="impact-service">${escapeHtml(placeName(row))}</span><span class="impact-tag">${row.demonstrated?'Demonstrated: this PR also changes its recorded behavior':row.test?'Exercises the changed method':'Potentially affected: calls the changed method'}</span>${row.depth>1?`<small class="impact-path">via ${row.path.slice(1,-1).map(escapeHtml).join(' → ')}</small>`:''}</li>`;
  const code=impact.callers.filter(row=>!row.test),tests=impact.callers.filter(row=>row.test);
  const other=code.filter(row=>row.crossService),same=code.filter(row=>!row.crossService);
  const group=(title,rows)=>rows.length?`<h5>${title} <span>${rows.length}</span></h5><ul>${rows.map(line).join('')}</ul>`:'';
- return `<section class="finding-impact" aria-labelledby="finding-impact-heading"><h4 id="finding-impact-heading">Impact of this change</h4>
+ return `<section class="finding-impact" aria-labelledby="finding-impact-heading"><h4 id="finding-impact-heading">Possible impact of this change based on analysis of code intent</h4>${possibilities}
   <p class="impact-origin">Changed here: ${impact.origins.map(button).join(', ')}<span class="impact-service">${escapeHtml(placeName(impact.origin))}</span><button type="button" class="impact-map" data-impact-method="${escapeHtml(impact.origin.id)}">Show on impact map</button></p>
   ${impact.inferred?'<p class="impact-note">The finding records only its file; this method is the one whose changed lines match its recorded facts.</p>':''}
   ${impact.declaredFromPatch?'<p class="impact-note">The finding records the method without parameter types; they come from this PR’s declaration of it.</p>':''}
-  ${impact.callers.length?group('Other services that call it',other)+group('Same service',same)+group('Tests that call it',tests)+(impact.truncated?`<p class="impact-note">Showing the first ${MAX_CALLERS} callers.</p>`:''):'<p>No other method calls this one in the recorded call graph.</p>'}
-  ${note}</section>`;
+  <section class="traced-callers"><h5>Traced callers${impact.callers.length?' · '+impact.callers.length:''}</h5>${impact.callers.length?group('Other services that call it',other)+group('Same service',same)+group('Tests that call it',tests)+(impact.truncated?`<p class="impact-note">Showing the first ${MAX_CALLERS} callers.</p>`:''):'<p>No other method calls this one in the recorded call graph.</p>'}
+  </section></section>`;
 }
 
 root.codeIntentFindingImpact={findingImpact,findingImpactMarkup,ownerName};
