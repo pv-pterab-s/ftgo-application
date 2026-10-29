@@ -207,6 +207,16 @@ function standardsScopeNotice(check){
  const scope=codeIntentStandardsScope(check);
  return scope?`<section class="standards-scope" role="status"><h4>${esc(scope.title)}</h4><p>${esc(scope.summary)}</p>${scope.details?`<p>${esc(scope.details)}.</p>`:''}</section>`:'';
 }
+function testScopeNotice(check){
+ const receipt=check?.test_analysis||{},notes=[];
+ if(Number(receipt.candidates_skipped)>0)notes.push(`${receipt.candidates_skipped} additional test methods exceeded the analysis limit`);
+ if(Number(receipt.deletions_skipped)>0)notes.push(`${receipt.deletions_skipped} additional test removals exceeded the analysis limit`);
+ if(Number(receipt.tests_unjudged)>0)notes.push(`${receipt.tests_unjudged} test methods could not be judged`);
+ if(Number(receipt.unrecoverable_files)>0)notes.push(`${receipt.unrecoverable_files} changed test files could not be reconstructed`);
+ const error=(check?.state||check?.conclusion)==='error';
+ if(!error&&!notes.length)return '';
+ return `<section class="standards-scope" role="status"><h4>${error?'Test-quality analysis incomplete':'Coverage note'}</h4><p>${esc(notes.join('; ')||check.detail||'Test-quality analysis could not finish')}.</p></section>`;
+}
 function checkExplanation(){
  const id=new URLSearchParams(location.search).get('check');
  if(!id||(demo&&rawChecks().some(c=>c.id===id&&walkthroughPipeline.demoEvidenceGap(c))))return '';
@@ -361,13 +371,14 @@ function standardCode(item){
   if(hunk){before=Number(hunk[1]);after=Number(hunk[2]);return `<div class="standard-diff-line"><span class="line-no"></span><span class="line-no"></span><code>${esc(text)}</code></div>`;}
   const old=mark!=='+'&&before!=null?before++:'',next=mark!=='-'&&after!=null?after++:'';
   const suggested=item.sourceFocus;
-  const at=suggested&&mark!=='-'&&next===suggested.line&&text.indexOf(suggested.text)===text.lastIndexOf(suggested.text)?text.indexOf(suggested.text):-1;
+  const prior=suggested?.side==='before';
+  const at=suggested&&mark!==(prior?'+':'-')&&(prior?old:next)===suggested.line&&text.indexOf(suggested.text)===text.lastIndexOf(suggested.text)?text.indexOf(suggested.text):-1;
   const hit=at>=0?{start:at,end:at+suggested.text.length}:focus.find(row=>row.row===index);
-  const code=hit?esc((mark||' ')+' '+text.slice(0,hit.start))+`<span class="standard-issue-location" title="Suggested issue location from the changed code">${esc(text.slice(hit.start,hit.end))}</span>`+esc(text.slice(hit.end)):esc((mark||' ')+' '+text);
+  const code=hit?esc((mark||' ')+' '+text.slice(0,hit.start))+`<span class="standard-issue-location" title="${prior?'Verification removed by this change':'Suggested issue location from the changed code'}">${esc(text.slice(hit.start,hit.end))}</span>`+esc(text.slice(hit.end)):esc((mark||' ')+' '+text);
   return `<div class="standard-diff-line ${mark==='+'?'a':mark==='-'?'d':''}"><span class="line-no">${old}</span><span class="line-no">${next}</span><code>${code}</code></div>`;
  }).join('');
  const available=item.comparison?.before?.text!=null&&item.comparison?.after?.text!=null;
- return `<div class="diffs source-only"><section class="pane"><header><h4>Code</h4><span>${esc(item.file)}</span></header>${available?`${focus.length||item.sourceFocus?'<p class="standard-focus-note">Red underline: suggested issue location in the changed code.</p>':''}<div class="standard-numbered-diff">${rows}</div>`:`<p class="evidence-empty">${esc(item.comparison?.reason||'Source comparison unavailable. Open Source evidence for available patches.')}</p>`}</section></div>`;
+ return `<div class="diffs source-only"><section class="pane"><header><h4>Code</h4><span>${esc(item.file)}</span></header>${available?`${focus.length||item.sourceFocus?`<p class="standard-focus-note">${item.sourceFocus?.side==='before'?'Red underline: the verification removed by this change.':'Red underline: suggested issue location in the changed code.'}</p>`:''}<div class="standard-numbered-diff">${rows}</div>`:`<p class="evidence-empty">${esc(item.comparison?.reason||'Source comparison unavailable. Open Source evidence for available patches.')}</p>`}</section></div>`;
 }
 function detailScreen(item){
  const answer=decision(item.id),intent=diffLines(intentLines(item.intentBefore),intentLines(item.intentAfter));
@@ -375,9 +386,10 @@ function detailScreen(item){
  const resolution=item.resolution?`<div class="rule"><small>HOW TO RESOLVE IT</small><p>${esc(item.resolution)}</p></div>`:'';
  const interpretation=`<div class="summary"><small>${esc(item.groundingLabel||'RECORDED PIPELINE EVIDENCE')}</small><p>${esc(item.detailSummary||item.summary)}</p></div>`;
  const standard=item.findings?.[0]?.kind==='standard'?item.findings[0]:null;
- const governance=!standard&&Boolean(item.objective);
+ const testQuality=item.testQuality===true,simple=Boolean(standard)||testQuality;
+ const governance=!simple&&Boolean(item.objective);
  const impactMarkup=codeIntentFindingImpact.findingImpactMarkup(item,state.packet);
- const question=standard?`Accept this code as an exception to ${standard.rule_id}?`:'Accept this governed change?';
+ const question=standard?`Accept this code as an exception to ${standard.rule_id}?`:testQuality?'Accept this change to the test coverage?':'Accept this governed change?';
  // A run whose deterministic checks did not finish never goes in, so its findings take no answers.
  const answersClosed=Boolean(state.status?.llm_review);
  const closedBar=`<div class="ask desc-assessment" role="region" aria-label="Intent assessment"><span class="merge-blocked" role="status">${esc(llmErrorReview.BLOCKED)}</span><b>No answer is taken: deterministic verification did not finish for this run.</b></div>`;
@@ -390,9 +402,9 @@ function detailScreen(item){
  const reported=review?.decision==='unresolved'?`<div class="rule incorrect-reported"><small>REJECTED · WILL BE FLAGGED ON FUTURE PRS UNTIL ADJUDICATED</small><p>${esc(review.reason||'No reason was given.')}${review.actor?` · ${esc(review.actor)}`:''}</p></div>`:'';
  const selector=targets.length>1?`<label>Finding <select data-review-scope><option value="">Choose a finding</option>${targets.map(t=>`<option value="${esc(t.finding.review.scope)}" ${target===t||target?.finding.review.scope===t.finding.review.scope?'selected':''}>${esc(t.finding.title||t.finding.name||t.finding.id||t.finding.ref)}</option>`).join('')}</select></label>`:'';
 
- return `<div class="ci desc-page${standard?' standard-page':governance?' governance-page':''}"><article class="tile">
-  ${standard?`${standardsScopeNotice(item.check)}<div class="tile-head"><h3>${esc(item.title)}</h3></div>
-  <div class="summary standard-intro"><p><b>${standard.watchOnly?'Advisory concern:':'What was flagged:'}</b> ${esc(item.detailSummary||item.summary)}</p></div>
+ return `<div class="ci desc-page${simple?' standard-page':governance?' governance-page':''}${testQuality?' test-quality-page':''}"><article class="tile">
+  ${simple?`${testQuality?testScopeNotice(item.check):standardsScopeNotice(item.check)}<div class="tile-head"><h3>${esc(item.title)}</h3></div>
+  <div class="summary standard-intro"><p><b>${standard?.watchOnly?'Advisory concern:':'What was flagged:'}</b> ${esc(item.detailSummary||item.summary)}</p></div>
   ${impactMarkup}
   ${standardCode(item)}
   `:governance?`<div class="tile-head"><h3>${esc(item.title)}</h3></div>
@@ -415,12 +427,12 @@ function detailScreen(item){
    <section class="pane"><header><b>Code</b><span>${esc(short(item.file))}</span></header>${item.comparison?.before?.text!=null&&item.comparison?.after?.text!=null?`<pre>${lines(sourceLines(item))}</pre>${item.comparison.complete?'':`<p class="evidence-empty">${esc(item.comparison.qualification||'Recorded source excerpt; open more evidence for context.')}</p>`}`:`<p class="evidence-empty">${esc(item.comparison?.reason||'No source comparison recorded for this item. Check the source evidence view for available patches.')}</p>`}</section>
   </div>
 `}
-  ${standard?'':codeIntentContractTrace.contractMarkup(item,state.packet,repo,sha)}
+  ${simple?'':codeIntentContractTrace.contractMarkup(item,state.packet,repo,sha)}
 
   ${codeIntentRunDetails.findingGapsMarkup(item,state.packet)}
   ${producedBy(item)}
   ${answersClosed?closedBar:item.status==='unknown'?'<div class="ask desc-assessment" role="region" aria-label="Intent assessment"><b>LACKS_DETERMINISTIC_EVIDENCE. Review the analysis gap; assessments are unavailable.</b></div>':item.status==='watch'?'<div class="ask desc-assessment" role="region" aria-label="Intent assessment"><b>This is informational; no response is required.</b></div>':`<div class="ask desc-assessment" role="region" aria-label="Intent assessment"><b>${esc(question)}</b>${selector}<button type="button" class="choice yes" data-act="yes" ${target&&!save?.busy&&!state.status?.local_preview?'':'disabled'} aria-pressed="${answer==='yes'}">${esc(yes)}</button><button type="button" class="choice no" data-act="no" ${target&&!save?.busy&&!state.status?.local_preview?'':'disabled'} aria-pressed="${answer==='no'}">${esc(no)}</button>${reasonBox}<button type="button" class="choice return-github" data-act="return-github" ${answer&&target&&!save?.busy&&!state.status?.local_preview&&returnToCommentUrl()?'':'disabled'} aria-busy="${!!save?.busy}"><span class="return-spinner" aria-hidden="true"><img src="assets/checks-running.gif" width="18" height="18" alt=""></span><span>Return to Github</span></button></div>`}
-  ${reported}${standard?'':`<section class="compact-evidence" aria-label="Explore this change"><div id="recorded-evidence">${standard?'':resolution}${connections}${reviewExplorer.pane(item,state.packet,state.summary,checks(),{tab:state.tab,node:state.node,codePath:state.codePath,full:state.full,file:state.evidenceFile,methods:state.methods})}</div></section>`}
+  ${reported}${simple?'':`<section class="compact-evidence" aria-label="Explore this change"><div id="recorded-evidence">${resolution}${connections}${reviewExplorer.pane(item,state.packet,state.summary,checks(),{tab:state.tab,node:state.node,codePath:state.codePath,full:state.full,file:state.evidenceFile,methods:state.methods})}</div></section>`}
  </article></div>`;
 }
 function runDetails(){return codeIntentRunDetails.runDetailsMarkup(state.status,state.packet,repo,{open:state.runDetailsOpen});}
@@ -466,6 +478,11 @@ function render(options={}){
    const check=checks().find(c=>c.id==='coding_standards');
    const scope=codeIntentStandardsScope(check);
    screen.innerHTML=`<section class="notice standards-empty"><h2>${scope?esc(scope.title):'No coding-standards findings'}</h2>${checkExplanation()}</section>`;
+  }
+  else if(route.get('check')==='improper_tests'&&state.model){
+   const check=checks().find(c=>c.id==='improper_tests');
+   const error=(check?.state||check?.conclusion)==='error',stopped=check?.state==='stopped';
+   screen.innerHTML=`<section class="notice standards-empty"><h2>${!check?'Test-quality result unavailable':error?'Test-quality analysis incomplete':stopped?'Test quality was not analyzed':'No test-quality findings'}</h2><p>${esc(check?.detail||'This run did not include a test-quality check.')}</p>${testScopeNotice(check)}</section>`;
   }
   else if(state.status?.llm_review)screen.innerHTML='<div class="notice"><h2>Automated verification is incomplete</h2><p>This PR is not going in in this state. The nondeterministic analysis below reports its source coverage separately and does not satisfy the incomplete deterministic checks.</p></div>';
   else screen.innerHTML=`<div class="notice"><h2>${state.model?'Description unavailable':'Loading issue description…'}</h2><p>${state.model?'No matching description was recorded for this issue.':'Loading the pinned review evidence.'}</p>${state.model?checkExplanation():''}</div>`;

@@ -300,6 +300,8 @@ function reviewFindings(checks,includeAdvisory=false){
    title:finding.kind==='deleted'?'Behavioral test removed':finding.kind==='inconclusive'?'Test evidence unavailable':'Test may not detect broken behavior',
    summary:descriptions[finding.kind]||descriptions.weak,file:finding.file||'',method:finding.unit||'',
    line:finding.line||'',basis:[finding.signals,finding.basis].filter(Boolean).join(' · '),
+   testKind:finding.kind||'weak',comment:finding.comment||'',signals:finding.signals||'',
+   reason_id:finding.reason_id||'',anchor_line:finding.anchor_line||'',anchor_confidence:finding.anchor_confidence||'',
    ref:finding.ref||'',decision:finding.decision||''});
  }
  return rows;
@@ -373,6 +375,7 @@ function reviewFindingItems(packet,summary,items,checks,includeAdvisory=false){
     ||(candidates.length===1?candidates[0]:null)):null;
   const interpretation=interpretations.get(finding.findingKey)||{};
   if(finding.kind==='standard'){projected.push(standardItem(packet,checks,finding,target,interpretation));continue;}
+  if(finding.kind==='test'){projected.push(testItem(packet,checks,finding,interpretation));continue;}
   const plain=interpretation.summary||target?.summary||finding.title;
   const fallback=finding.kind==='test'?[finding.summary,finding.basis].filter(Boolean).join(' '):plain;
   projected.push({id:finding.id,kind:finding.kind==='standard'&&!finding.watchOnly?'constraint':'change',status:finding.watchOnly?'watch':'finding',title:finding.title,
@@ -390,6 +393,64 @@ function reviewFindingItems(packet,summary,items,checks,includeAdvisory=false){
    qualification:interpretation.summary?'The finding comes from the structured Lambda check. The wording translates its bounded deterministic evidence.':target?'The rule result comes from the structured Lambda check. The before/after behavior comes from the matching bounded CodeIntent explanation.':'Projected directly from the structured Lambda check result. No additional model judgment was used.'});
  }
  return projected;
+}
+
+// Test findings use the same compact source-review layout. Copy only locations
+// actually present in this digest-verified patch; an absent assertion has no span.
+function testItem(packet,checks,finding,interpretation={}){
+ let comparison=patchComparison(packet,finding.file),sourceFocus=null,head=null;
+ const anchor=Number(finding.anchor_line),trusted=['high','medium'].includes(finding.anchor_confidence);
+ if(comparison&&Number.isInteger(anchor)&&anchor>0&&trusted){
+  for(const [mark,text] of comparison.diffLines){
+   const hunk=String(text).match(/^@@ -\d+(?:,\d+)? \+(\d+)/);
+   if(hunk){head=Number(hunk[1]);continue;}
+   if(head===null||mark==='-')continue;
+   if(head===anchor&&text.trim()&&!/^\s*(?:@|(?:public\s+)?void\s)/.test(text))sourceFocus={line:head,text:text.trim()};
+   head++;
+  }
+ }
+ if(comparison&&!sourceFocus){
+  let old=null,next=null;const candidates=[];
+  const currentCommands=new Set(comparison.diffLines.filter(([mark])=>mark!=='-').flatMap(([,text])=>[...text.matchAll(/\.command\(\s*(?:new\s+)?(\w+)/g)].map(m=>m[1])));
+  for(const [mark,text] of comparison.diffLines){
+   const hunk=String(text).match(/^@@ -(\d+)(?:,\d+)? \+(\d+)/);
+   if(hunk){old=Number(hunk[1]);next=Number(hunk[2]);continue;}
+   if(old===null)continue;
+   const command=text.match(/\.command\(\s*(?:new\s+)?(\w+)/);
+   if(finding.reason_id==='saga_chain_truncated'&&mark==='-'&&command&&!currentCommands.has(command[1]))
+    candidates.push({side:'before',line:old,text:text.trim()});
+   if(mark==='+'&&((finding.reason_id==='mocked_subject'&&/^\s*(?:final\s+)?[\w.<>]+\s+\w+\s*=\s*(?:Mockito\.)?mock\(/.test(text))||
+     (/literal true\/false/.test(finding.signals)&&/^\s*(?:Assertions\.)?(?:assertTrue\(\s*true\s*\)|assertFalse\(\s*false\s*\))\s*;/.test(text))))
+    candidates.push({line:next,text:text.trim()});
+   if(mark!=='+')old++;if(mark!=='-')next++;
+  }
+  if(candidates.length===1)sourceFocus=candidates[0];
+ }
+ const descriptions={
+  weakened_matcher:['The test now accepts any argument','The verification no longer distinguishes the expected argument from an incorrect one.'],
+  verify_mode_loosened:['The test accepts extra or missing calls','The verification is less strict about the number of collaborator calls.'],
+  saga_chain_truncated:['The test no longer checks the complete workflow','Later commands or replies are no longer checked by this test.'],
+  mocked_subject:['The test replaces production behavior with a mock','The production implementation can break while the mocked result still satisfies this test.'],
+  disabled:['The test no longer runs','The test can no longer detect a regression while it is disabled or skipped.'],
+  self_comparison:['The assertion compares a value with itself','The assertion cannot distinguish the expected result from a broken result.']};
+ let [title,detail]=descriptions[finding.reason_id]||[finding.title,finding.summary];
+ if(finding.testKind==='deleted'){title='A behavior test was removed';detail='This change removes a test. Review whether equivalent checks still cover the behavior.';}
+ else if(finding.testKind==='inconclusive'){title='Test-quality analysis is incomplete';detail=finding.summary;}
+ else if(/literal true\/false/.test(finding.signals)){title='The assertion always passes';detail='The changed assertion checks a constant instead of the result of the behavior under test.';}
+  else if(/has no assertion/.test(finding.signals)){title='The test does not check the result';detail='The changed test has no assertion checking the behavior it exercises.';}
+ else if(finding.comment&&!descriptions[finding.reason_id])detail=finding.comment;
+ return {id:finding.id,kind:'change',status:'finding',testQuality:true,title,concept:'Test quality',
+  method:finding.method,methodRef:finding.method,file:finding.file,line:finding.line,
+  summary:interpretation.summary||detail,detailSummary:interpretation.review||interpretation.summary||detail,
+  groundingLabel:interpretation.summary?'AGENT INTERPRETATION · GROUNDED IN TEST EVIDENCE':'RECORDED TEST-QUALITY FINDING',
+  objective:'',intentBefore:[],intentAfter:[],connections:[],
+  before:'',after:'',resolution:'',sourceFocus,
+  comparison:sourceFocus&&sourceFocus.side!=='before'?standardFocusComparison(packet,finding.file,sourceFocus):comparison,
+  possibleEffects:interpretation.possible_effects||(finding.testKind==='inconclusive'?[]:[{
+   title:finding.testKind==='deleted'?'Regression coverage may be lost':'Broken behavior may go unnoticed',
+   scenario:finding.testKind==='deleted'?'A removed test no longer checks the behavior it previously exercised.':'A regression in the behavior this test claims to verify may no longer make it fail.',
+   customer_effect:'Users could encounter incorrect behavior without this test catching it before release.',tone:'risk'}]),
+  findings:[finding],check:(checks||[]).find(c=>c.id==='improper_tests')||null,reviewType:'Test'};
 }
 
 function ownerReviewItems(packet,summary,items,checks){

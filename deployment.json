@@ -1,8 +1,8 @@
 {
   "repository": "pv-pterab-s/ftgo-application",
   "api": "https://ieg4z2l09g.execute-api.us-east-2.amazonaws.com/prod",
-  "image": "962500057659.dkr.ecr.us-east-2.amazonaws.com/common-table-codeintent@sha256:e011b983d30822c8b47b015f553ee11a393f9190de5eb85f3461f2657f64db16",
-  "source_commit": "710581bd4db3cc8af4d06fb8332489eaca3459bd",
+  "image": "962500057659.dkr.ecr.us-east-2.amazonaws.com/common-table-codeintent@sha256:d71a3f024bf77f8ea53f30193dadd31c97ea3d66587fbfe11bee638941b64660",
+  "source_commit": "52908d1733f425e5e35e80ccf088fa032263d9a4",
   "baseline": "existing supplied baseline unchanged",
   "source_branch": "feat/codeintent-version-chain"
 }
