@@ -215,31 +215,44 @@ function findingGapsMarkup(item,packet){
 }
 
 // The component versions that produced this run (review_service/VERSIONS.md), this page's own release, and
-// the item's own rule. Values come only from the record; a missing one says "not recorded", never a guess.
+// the item's own rule, as a hidden HTML comment: nothing shows on the page; search the live page (developer tools,
+// Elements) for __VERSION. Lines read like the PR message's span: "<name> [<id>]: <version> (key=value, ...)".
+// Values come only from the record; a missing one says "not recorded", never a guess.
+const VERSION_SAFE=/[A-Za-z0-9 \/:@+~._\-'*!$;?#{}|`]/;
+// As governance_comment.versions_quote: percent-encode anything that could end the comment or break a line.
+function versionQuote(value,first=false){
+ let text=[...String(value??'')].map(ch=>VERSION_SAFE.test(ch)?ch:[...new TextEncoder().encode(ch)].map(byte=>'%'+byte.toString(16).toUpperCase().padStart(2,'0')).join('')).join('');
+ if(text[0]===' '||(first&&text&&text[0]!=='%'&&!/[A-Za-z]/.test(text[0])))text='%'+text.charCodeAt(0).toString(16).toUpperCase().padStart(2,'0')+text.slice(1);
+ if(text.endsWith(' '))text=text.slice(0,-1)+'%20';
+ return text;
+}
 function producedByMarkup(status,packet,release,item){
  const record=[status?.codeintent_versions,packet?.codeintent_versions].find(value=>value&&Array.isArray(value.components));
- const detailTitle=detail=>detail&&typeof detail==='object'?Object.entries(detail).map(([key,value])=>`${key}: ${value}`).join('\n'):'';
- const row=(name,version,title)=>`<dt>${escapeHtml(name)}</dt><dd${title?` title="${escapeHtml(title)}"`:''}>${escapeHtml(version||'not recorded')}</dd>`;
- const rows=record?record.components.filter(part=>part&&typeof part==='object'&&part.id!=='page')
-   .map(part=>row(part.name||part.id,part.version,detailTitle(part.detail)))
-  :[row('Pipeline components','not recorded')];
+ const line=(name,id,version,detail)=>{
+  const pairs=detail&&typeof detail==='object'?Object.entries(detail).filter(([,value])=>value!=null&&value!==''):[];
+  return `${versionQuote(name,true)} [${versionQuote(id)}]: ${versionQuote(version||'not recorded')}`+
+   (pairs.length?` (${pairs.map(([key,value])=>`${versionQuote(key)}=${versionQuote(value)}`).join(', ')})`:'');
+ };
+ const lines=record?record.components.filter(part=>part&&typeof part==='object'&&part.id!=='page')
+   .map(part=>line(part.name||part.id,part.id,part.version,part.detail))
+  :[line('Pipeline components','record','not recorded')];
  const published=release&&!release.local&&!release.unknown;
  // null: still loading; unknown: the release record could not be read; local: no release record exists.
- // The page's number (ui_version); a release record staged before numbers existed has none (its commit is in the title).
+ // The page's number (ui_version); a release record staged before numbers existed has none (its commit is in the detail).
  const pageVersion=()=>release.ui_version?String(release.ui_version):'unrecorded';
- rows.push(row('Review page',published?pageVersion():release?.local?'local checkout (unpublished)':release?.unknown?'not recorded':'loading…',
-  published?detailTitle({ui_commit:release.ui_commit,ui_dirty:release.ui_dirty,source_branch:release.source_branch,backend_image:release.backend_image}):''));
+ lines.push(line('Review page','page',published?pageVersion():release?.local?'local checkout (unpublished)':release?.unknown?'not recorded':'loading…',
+  published?{ui_commit:release.ui_commit,ui_dirty:release.ui_dirty,source_branch:release.source_branch,backend_image:release.backend_image}:null));
  const standard=item?.findings?.[0]?.kind==='standard'?item.findings[0]:null;
  if(standard){
-  rows.push(row('Rule',standard.rule_id),row('Rule version',standard.rule_version));
-  if(standard.detected_by)rows.push(row('Detected by',standard.detected_by+(standard.static_check?` (${standard.static_check})`:'')));
+  lines.push(line('Rule','rule',standard.rule_id),line('Rule version','rule-version',standard.rule_version));
+  if(standard.detected_by)lines.push(line('Detected by','detected-by',standard.detected_by+(standard.static_check?` (${standard.static_check})`:'')));
  }else if(item?.objective){
   const baseline=status?.governance_baseline;
-  if(baseline?.governance_version)rows.push(row('Governance version',String(baseline.governance_version).replace(/^gov:/,'').slice(0,12),baseline.governance_version));
-  if(baseline?.authority?.ledger_release)rows.push(row('Ledger release',String(baseline.authority.ledger_release).slice(0,12),baseline.authority.ledger_release));
-  rows.push(row('Objective',item.objectiveId||item.objective_id||item.concept||item.id));
+  if(baseline?.governance_version)lines.push(line('Governance version','governance-version',String(baseline.governance_version).replace(/^gov:/,'').slice(0,12),{version_id:baseline.governance_version}));
+  if(baseline?.authority?.ledger_release)lines.push(line('Ledger release','ledger-release',String(baseline.authority.ledger_release).slice(0,12),{ledger_release:baseline.authority.ledger_release}));
+  lines.push(line('Objective','objective',item.objectiveId||item.objective_id||item.concept||item.id));
  }
- return `<section class="produced-by" aria-label="Produced by"><h4>Produced by</h4><dl>${rows.join('')}</dl></section>`;
+ return `<!-- __VERSION codeintent-versions-v1\n${lines.join('\n')}\n-->`;
 }
 
 const api={runDetails,runDetailsMarkup,checkCoverage,findingGaps,findingGapsMarkup,itemFlows,ownerName,producedByMarkup};

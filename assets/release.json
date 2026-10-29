@@ -2,7 +2,7 @@
  "backend_image": "962500057659.dkr.ecr.us-east-2.amazonaws.com/common-table-codeintent@sha256:deca32eae9a641c1fde61233c9a1095128470bab110ef2fd0fd6ddeb3b931e37",
  "schema": "review-ui-release-v1",
  "source_branch": "feat/codeintent-version-chain",
- "ui_commit": "9c4792f02d1e1f96c5724d361985b7a2d34e67b4",
+ "ui_commit": "6a62961f11d4bbe98f45be0a2e227a45fc533231",
  "ui_dirty": "false",
- "ui_version": "v000"
+ "ui_version": "v001"
 }
