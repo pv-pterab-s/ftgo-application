@@ -1,8 +1,7 @@
 {
- "backend_image": "962500057659.dkr.ecr.us-east-2.amazonaws.com/common-table-codeintent@sha256:deca32eae9a641c1fde61233c9a1095128470bab110ef2fd0fd6ddeb3b931e37",
+ "backend_image": "962500057659.dkr.ecr.us-east-2.amazonaws.com/common-table-codeintent@sha256:e011b983d30822c8b47b015f553ee11a393f9190de5eb85f3461f2657f64db16",
  "schema": "review-ui-release-v1",
  "source_branch": "feat/codeintent-version-chain",
- "ui_commit": "6a62961f11d4bbe98f45be0a2e227a45fc533231",
- "ui_dirty": "false",
- "ui_version": "v001"
+ "ui_commit": "710581bd4db3cc8af4d06fb8332489eaca3459bd",
+ "ui_dirty": "false"
 }

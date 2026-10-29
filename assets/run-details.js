@@ -234,14 +234,19 @@ function producedByMarkup(status,packet,release,item){
    (pairs.length?` (${pairs.map(([key,value])=>`${versionQuote(key)}=${versionQuote(value)}`).join(', ')})`:'');
  };
  const lines=record?record.components.filter(part=>part&&typeof part==='object'&&part.id!=='page')
-   .map(part=>line(part.name||part.id,part.id,part.version,part.detail))
+   .map(part=>{
+    // As governance_comment.versioned: a version that is not a commit SHA (an earlier vNNN) shows as unrecorded.
+    const sha=part.version==='unrecorded'||/^[0-9a-f]{40}$/.test(String(part.version??''));
+    return line(part.name||part.id,part.id,sha?part.version:'unrecorded',
+     sha||part.version==null||part.version===''?part.detail:{...(part.detail||{}),legacy_version:part.version});
+   })
   :[line('Pipeline components','record','not recorded')];
  const published=release&&!release.local&&!release.unknown;
  // null: still loading; unknown: the release record could not be read; local: no release record exists.
- // The page's number (ui_version); a release record staged before numbers existed has none (its commit is in the detail).
- const pageVersion=()=>release.ui_version?String(release.ui_version):'unrecorded';
+ // The page's version is the full commit it was published from (ui_commit); anything else is "unrecorded".
+ const pageVersion=()=>typeof release.ui_commit==='string'&&/^[0-9a-f]{40}$/.test(release.ui_commit)?release.ui_commit:'unrecorded';
  lines.push(line('Review page','page',published?pageVersion():release?.local?'local checkout (unpublished)':release?.unknown?'not recorded':'loading…',
-  published?{ui_commit:release.ui_commit,ui_dirty:release.ui_dirty,source_branch:release.source_branch,backend_image:release.backend_image}:null));
+  published?{...(release.ui_dirty==='true'?{dirty:'true'}:{}),source_branch:release.source_branch,backend_image:release.backend_image}:null));
  const standard=item?.findings?.[0]?.kind==='standard'?item.findings[0]:null;
  if(standard){
   lines.push(line('Rule','rule',standard.rule_id),line('Rule version','rule-version',standard.rule_version));
