@@ -156,7 +156,7 @@ jobs:
                   # text: the decisions API rendered it and records no version, and this workflow posted it.
                   chain = parse_versions_marker(bot.get('body', '')) or {'schema': 'codeintent-versions-v1', 'components': []}
                   version = env.get('CODEINTENT_WORKFLOW_VERSION', '')
-                  version = version if re.fullmatch(r'v\d{3}', version) else 'unrecorded'
+                  version = version if re.fullmatch(r'v[0-9]{3}', version) else 'unrecorded'
                   chain['components'] = [c for c in chain['components'] if isinstance(c, dict)
                                          and c.get('id') not in {'renderer', 'page', 'status-service', 'updater'}] + [
                       {'id': 'renderer', 'name': 'Message renderer', 'version': 'unrecorded', 'detail': {'by': 'decisions API'}},

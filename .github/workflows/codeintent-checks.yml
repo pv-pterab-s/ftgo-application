@@ -105,10 +105,8 @@ jobs:
             commit=unrecorded
           fi
           version=$(jq -r 'if type != "object" or .ui_version == null then empty elif (.ui_version | type) == "string" then .ui_version else "invalid" end' <<<"$release" 2>/dev/null || true)
-          if [ -z "$version" ] && [ "$commit" != unrecorded ]; then
-            version=${commit:0:12}
-          fi
-          if ! [[ "$version" =~ ^v[0-9]{3}$ || "$version" =~ ^[0-9a-f]{12}$ ]]; then
+          # A release staged before page numbers existed has none: its commit stays in the detail only.
+          if ! [[ "$version" =~ ^v[0-9]{3}$ ]]; then
             version=unrecorded
           fi
           echo "Review page version: $version ($commit)"
@@ -139,10 +137,9 @@ jobs:
           def inline(value):
               return str(value or '').replace('\n',' ').replace('|','\\|').replace('<','&lt;').replace('>','&gt;')[:300]
           import re
-          def number(name, commit=False):
+          def number(name):
               value=os.environ.get(name,'')
-              ok=re.fullmatch(r'v\d{3}',value) or (commit and re.fullmatch(r'[0-9a-f]{12}',value))
-              return value if ok else 'unrecorded'
+              return value if re.fullmatch(r'v[0-9]{3}',value) else 'unrecorded'
           sha=os.environ.get('GITHUB_WORKFLOW_SHA','') or 'unrecorded'
           run=os.environ.get('GITHUB_RUN_ID','') or 'unrecorded'
           attempt=os.environ.get('GITHUB_RUN_ATTEMPT','')
@@ -150,7 +147,7 @@ jobs:
           components=[{'id':'workflow','name':'PR workflow','version':number('CODEINTENT_WORKFLOW_VERSION'),
                        'detail':{'file':'codeintent-checks.yml','ref':os.environ.get('GITHUB_WORKFLOW_REF','') or 'unrecorded',
                                  'sha':sha,'run':run+'/'+attempt if attempt and run!='unrecorded' else run}},
-                      {'id':'page','name':'Review page','version':number('PAGE_UI_VERSION',commit=True),
+                      {'id':'page','name':'Review page','version':number('PAGE_UI_VERSION'),
                        'detail':{'ui_commit':page}}]
           chain={'schema':'codeintent-versions-v1','components':components}
           data=json.dumps(chain,separators=(',',':'),sort_keys=True,default=str).encode('utf-8')
@@ -758,10 +755,9 @@ jobs:
           # Read-time components (review_service/VERSIONS.md). The backend copies this run's
           # codeintent_workflow into the stored record; an older backend has no record, so add it here.
           import re
-          def number(name, commit=False):
+          def number(name):
               value=os.environ.get(name,'')
-              ok=re.fullmatch(r'v\d{3}',value) or (commit and re.fullmatch(r'[0-9a-f]{12}',value))
-              return value if ok else 'unrecorded'
+              return value if re.fullmatch(r'v[0-9]{3}',value) else 'unrecorded'
           workflow_version=number('CODEINTENT_WORKFLOW_VERSION')
           workflow_sha=os.environ.get('GITHUB_WORKFLOW_SHA','') or 'unrecorded'
           components=[]
@@ -774,7 +770,7 @@ jobs:
                                  'detail':{'file':'codeintent-checks.yml','ref':os.environ.get('GITHUB_WORKFLOW_REF','') or 'unrecorded',
                                            'sha':workflow_sha,'run':run+'/'+attempt if attempt and run!='unrecorded' else run}})
           page=os.environ.get('PAGE_UI_COMMIT','') or 'unrecorded'
-          components.append({'id':'page','name':'Review page','version':number('PAGE_UI_VERSION',commit=True),
+          components.append({'id':'page','name':'Review page','version':number('PAGE_UI_VERSION'),
                              'detail':{'ui_commit':page}})
           components.append({'id':'renderer','name':'Message renderer','version':workflow_version,
                              'detail':{'by':'codeintent-checks.yml','sha':workflow_sha}})
