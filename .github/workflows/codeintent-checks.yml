@@ -631,6 +631,18 @@ jobs:
               return line
           
           
+          def versioned(component):
+              """A component whose version is a full commit SHA or "unrecorded"; anything else (an earlier vNNN number) is
+              shown as unrecorded, with the old value kept in its detail."""
+              version=component.get('version')
+              if isinstance(version,str) and (version=='unrecorded' or re.fullmatch(r'[0-9a-f]{40}',version)):
+                  return component
+              detail=dict(component.get('detail') or {})
+              if version not in (None,''):
+                  detail['legacy_version']=version
+              return {**component,'version':'unrecorded','detail':detail}
+          
+          
           def versions_marker(chain, detail=True):
               """The versions span: empty, so nothing shows on the page; its title carries the chain, one line per component."""
               entries=[c for c in (chain or {}).get('components') or [] if isinstance(c,dict)]
@@ -679,7 +691,7 @@ jobs:
               With `room` (characters left in the message), a span that does not fit drops each component's detail, and is
               left out when even that does not fit.
               """
-              entries=[c for c in (chain or {}).get('components') or [] if isinstance(c,dict)]
+              entries=[versioned(c) for c in (chain or {}).get('components') or [] if isinstance(c,dict)]
               if not entries:
                   return []
               def fits(span):
@@ -806,8 +818,14 @@ jobs:
               risks=(acceptance.get('intent_risks') or {}).get('assessments',[])
               if risks:
                   rows+=['',f"🟡 Intent outside governed objectives: {len(risks)} change(s); {len(acceptance.get('required_reviews',[]))} awaiting risk review."]
-              versions=versions_lines(versions_chain(document.get('codeintent_versions'),components),
-                                      MESSAGE_LIMIT-len('\n'.join(rows))-3)
+              chain=versions_chain(document.get('codeintent_versions'),components)
+              versions=versions_lines(chain, MESSAGE_LIMIT-len('\n'.join(rows))-3)
+              if chain and not versions:
+                  # Only a message near GitHub's limit gets here: shorten the finding links' long tooltips (the full text is on
+                  # the report) so the commit SHAs still fit.
+                  rows=[re.sub(r' title="([^"]{300})[^"]+"', lambda m: ' title="'+m.group(1).rsplit(' ',1)[0]+' …"', row)
+                        for row in rows]
+                  versions=versions_lines(chain, MESSAGE_LIMIT-len('\n'.join(rows))-3)
               if versions:
                   rows+=([''] if rows[-1] else [])+versions
               return '\n'.join(rows)+'\n'
