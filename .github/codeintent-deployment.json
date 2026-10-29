@@ -5,7 +5,7 @@
   "aws_account": "962500057659",
   "aws_region": "us-east-2",
   "runtime": "standalone review_service",
-  "image": "962500057659.dkr.ecr.us-east-2.amazonaws.com/common-table-codeintent@sha256:deca32eae9a641c1fde61233c9a1095128470bab110ef2fd0fd6ddeb3b931e37",
+  "image": "962500057659.dkr.ecr.us-east-2.amazonaws.com/common-table-codeintent@sha256:e011b983d30822c8b47b015f553ee11a393f9190de5eb85f3461f2657f64db16",
   "baseline_status": "user_supplied_archive_imported_unchanged",
   "baseline_source_commit": "3f7173407cebe227a5f969eeb824dbe4811073ff",
   "verification": "deployment_http_and_pr_rerun_checks_passed",
@@ -15,7 +15,7 @@
   ],
   "pinned_image": "962500057659.dkr.ecr.us-east-2.amazonaws.com/common-table-codeintent@sha256:ca4b00ba3094f120545721f04946b96bb735c0aa2265ece62d03fb79a136a15d",
   "codeintent_source_branch": "feat/codeintent-version-chain",
-  "codeintent_source_commit": "9c4792f02d1e1f96c5724d361985b7a2d34e67b4",
+  "codeintent_source_commit": "710581bd4db3cc8af4d06fb8332489eaca3459bd",
   "deployed_at": "2026-10-29",
-  "component_versions": "review-service v001, workflows v001, others v000"
+  "versions": "git commit SHAs"
 }
