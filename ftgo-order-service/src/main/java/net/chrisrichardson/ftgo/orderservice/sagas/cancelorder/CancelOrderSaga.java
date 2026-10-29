@@ -6,7 +6,6 @@ import io.eventuate.tram.sagas.simpledsl.SimpleSaga;
 import net.chrisrichardson.ftgo.accountservice.api.AccountingServiceChannels;
 import net.chrisrichardson.ftgo.accountservice.api.ReverseAuthorizationCommand;
 import net.chrisrichardson.ftgo.orderservice.api.OrderServiceChannels;
-import net.chrisrichardson.ftgo.orderservice.sagaparticipants.BeginCancelCommand;
 import net.chrisrichardson.ftgo.orderservice.sagaparticipants.ConfirmCancelOrderCommand;
 import net.chrisrichardson.ftgo.orderservice.sagaparticipants.UndoBeginCancelCommand;
 import net.chrisrichardson.ftgo.kitchenservice.api.BeginCancelTicketCommand;
@@ -29,7 +28,8 @@ public class CancelOrderSaga implements SimpleSaga<CancelOrderSagaData> {
   @PostConstruct
   public void initializeSagaDefinition() {
     sagaDefinition = step()
-            .invokeParticipant(this::beginCancel)
+            // OrderService.cancel() enters CANCEL_PENDING when it creates this saga.
+            // Compensate that transition without trying to perform it a second time.
             .withCompensation(this::undoBeginCancel)
             .step()
             .invokeParticipant(this::beginCancelTicket)
@@ -84,13 +84,6 @@ public class CancelOrderSaga implements SimpleSaga<CancelOrderSagaData> {
             .to(OrderServiceChannels.COMMAND_CHANNEL)
             .build();
   }
-
-  private CommandWithDestination beginCancel(CancelOrderSagaData data) {
-    return send(new BeginCancelCommand(data.getOrderId()))
-            .to(OrderServiceChannels.COMMAND_CHANNEL)
-            .build();
-  }
-
 
   @Override
   public SagaDefinition<CancelOrderSagaData> getSagaDefinition() {
