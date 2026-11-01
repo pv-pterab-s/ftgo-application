@@ -7,10 +7,12 @@ import net.chrisrichardson.ftgo.orderservice.RestaurantMother;
 import net.chrisrichardson.ftgo.orderservice.api.events.OrderAuthorized;
 import net.chrisrichardson.ftgo.orderservice.api.events.OrderCreatedEvent;
 import net.chrisrichardson.ftgo.orderservice.api.events.OrderDomainEvent;
+import net.chrisrichardson.ftgo.orderservice.api.events.OrderLineItem;
 import net.chrisrichardson.ftgo.orderservice.api.events.OrderState;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -66,5 +68,21 @@ public class OrderTest {
     order.confirmRevision(orderRevision);
 
     assertEquals(CHICKEN_VINDALOO_PRICE.multiply(10), order.getOrderTotal());
+  }
+
+  @Test
+  public void shouldKeepUnchangedLineItemsWhenRevisingSubset() {
+    List<OrderLineItem> lineItems = new ArrayList<>(chickenVindalooLineItems());
+    lineItems.add(new OrderLineItem("2", "Lamb Korma", CHICKEN_VINDALOO_PRICE, 2));
+    Order order = Order.createOrder(CONSUMER_ID, AJANTA_RESTAURANT, DELIVERY_INFORMATION, lineItems).result;
+    order.noteApproved();
+
+    OrderRevision orderRevision = new OrderRevision(Optional.empty(), Collections.singletonList(new RevisedOrderLineItem(10, "1")));
+
+    order.revise(orderRevision);
+    order.confirmRevision(orderRevision);
+
+    assertEquals(10, order.getLineItems().get(0).getQuantity());
+    assertEquals(2, order.getLineItems().get(1).getQuantity());
   }
 }

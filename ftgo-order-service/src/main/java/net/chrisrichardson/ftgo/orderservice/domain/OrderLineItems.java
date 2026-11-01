@@ -2,14 +2,11 @@ package net.chrisrichardson.ftgo.orderservice.domain;
 
 import net.chrisrichardson.ftgo.common.Money;
 import net.chrisrichardson.ftgo.orderservice.api.events.OrderLineItem;
-import net.chrisrichardson.ftgo.common.RevisedOrderLineItem;
 
 import javax.persistence.CollectionTable;
 import javax.persistence.ElementCollection;
 import javax.persistence.Embeddable;
 import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
 
 @Embeddable
 public class OrderLineItems {
@@ -49,16 +46,9 @@ public class OrderLineItems {
   }
 
   void updateLineItems(OrderRevision orderRevision) {
-    getLineItems().stream().forEach(li -> {
-
-      Optional<Integer> revised = orderRevision.getRevisedOrderLineItems()
-              .stream()
-              .filter(item -> Objects.equals(li.getMenuItemId(), item.getMenuItemId()))
-              .map(RevisedOrderLineItem::getQuantity)
-              .findFirst();
-
-      li.setQuantity(revised.orElseThrow(() ->
-              new IllegalArgumentException(String.format("menu item id not found.", li.getMenuItemId()))));
+    orderRevision.getRevisedOrderLineItems().forEach(revisedLineItem -> {
+      OrderLineItem lineItem = findOrderLineItem(revisedLineItem.getMenuItemId());
+      lineItem.setQuantity(revisedLineItem.getQuantity());
     });
   }
 
